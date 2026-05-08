@@ -1,0 +1,614 @@
+{
+  "meta": {
+    "lastUpdated": "2026-05-08 09:10",
+    "version": 1
+  },
+  "providers": {
+    "satellite": {
+      "name": "Sentinel Hub adapter",
+      "mode": "mock-fallback",
+      "status": "ready"
+    },
+    "weather": {
+      "name": "Weather adapter",
+      "mode": "mock-fallback",
+      "status": "ready"
+    },
+    "market": {
+      "name": "Market adapter",
+      "mode": "mock-fallback",
+      "status": "ready"
+    },
+    "whatsapp": {
+      "name": "WhatsApp adapter",
+      "mode": "mock-fallback",
+      "status": "ready"
+    }
+  },
+  "market": {
+    "updatedAt": "2026-05-08 09:00",
+    "soy": {
+      "label": "Soja saca 60kg",
+      "price": 128.4,
+      "change": 1.8,
+      "source": "Feed demo local"
+    },
+    "corn": {
+      "label": "Milho saca 60kg",
+      "price": 69.7,
+      "change": -0.6,
+      "source": "Feed demo local"
+    }
+  },
+  "plots": [
+    {
+      "id": "TL-01",
+      "name": "Talhao Norte",
+      "farmName": "Fazenda Aurora",
+      "crop": "Soja",
+      "hectares": 128,
+      "municipality": "Sorriso, MT",
+      "center": {
+        "lat": -12.5471,
+        "lon": -55.7118
+      },
+      "coordinatesText": "-12.5471, -55.7118",
+      "agronomist": "Marina Costa",
+      "whatsapp": "+55 65 99971-1221",
+      "notes": "Acesso principal pela borda leste.",
+      "snapshots": [
+        {
+          "id": "SN-TL01-01",
+          "capturedAt": "2026-04-12 08:05",
+          "ndvi": 0.69,
+          "delta": 0.0,
+          "status": "green",
+          "affectedAreaHa": 3,
+          "issue": "Cobertura uniforme e boa resposta vegetativa.",
+          "cloudCoverage": 12,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL01-0412",
+          "weather": {
+            "tempC": 28,
+            "rainMm": 12,
+            "humidity": 74,
+            "windKmh": 9
+          },
+          "zones": [
+            { "id": "N1", "fill": "#8cdf8a", "stroke": "#c7ffcb" },
+            { "id": "N2", "fill": "#7bd99c", "stroke": "#d7ffd4" },
+            { "id": "N3", "fill": "#90e494", "stroke": "#dbffd8" },
+            { "id": "N4", "fill": "#7ed883", "stroke": "#c4ffc8" }
+          ],
+          "hotspot": { "x": 72, "y": 58, "radius": 10, "label": "Baixa variacao" }
+        },
+        {
+          "id": "SN-TL01-02",
+          "capturedAt": "2026-04-20 08:07",
+          "ndvi": 0.73,
+          "delta": 0.04,
+          "status": "green",
+          "affectedAreaHa": 2,
+          "issue": "Recuperacao de borda e vigor em crescimento.",
+          "cloudCoverage": 9,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL01-0420",
+          "weather": {
+            "tempC": 29,
+            "rainMm": 8,
+            "humidity": 71,
+            "windKmh": 10
+          },
+          "zones": [
+            { "id": "N1", "fill": "#8cdf8a", "stroke": "#c7ffcb" },
+            { "id": "N2", "fill": "#7bd99c", "stroke": "#d7ffd4" },
+            { "id": "N3", "fill": "#90e494", "stroke": "#dbffd8" },
+            { "id": "N4", "fill": "#7ed883", "stroke": "#c4ffc8" }
+          ],
+          "hotspot": { "x": 70, "y": 55, "radius": 9, "label": "Borda leste" }
+        },
+        {
+          "id": "SN-TL01-03",
+          "capturedAt": "2026-04-28 08:05",
+          "ndvi": 0.76,
+          "delta": 0.03,
+          "status": "green",
+          "affectedAreaHa": 1,
+          "issue": "Cobertura fechando de forma uniforme.",
+          "cloudCoverage": 7,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL01-0428",
+          "weather": {
+            "tempC": 27,
+            "rainMm": 18,
+            "humidity": 78,
+            "windKmh": 11
+          },
+          "zones": [
+            { "id": "N1", "fill": "#8cdf8a", "stroke": "#c7ffcb" },
+            { "id": "N2", "fill": "#7bd99c", "stroke": "#d7ffd4" },
+            { "id": "N3", "fill": "#90e494", "stroke": "#dbffd8" },
+            { "id": "N4", "fill": "#7ed883", "stroke": "#c4ffc8" }
+          ],
+          "hotspot": { "x": 67, "y": 52, "radius": 8, "label": "Sem prioridade" }
+        },
+        {
+          "id": "SN-TL01-04",
+          "capturedAt": "2026-05-05 08:10",
+          "ndvi": 0.81,
+          "delta": 0.05,
+          "status": "green",
+          "affectedAreaHa": 1,
+          "issue": "Indice alto e sem anomalia relevante.",
+          "cloudCoverage": 6,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL01-0505",
+          "weather": {
+            "tempC": 26,
+            "rainMm": 10,
+            "humidity": 80,
+            "windKmh": 8
+          },
+          "zones": [
+            { "id": "N1", "fill": "#8cdf8a", "stroke": "#c7ffcb" },
+            { "id": "N2", "fill": "#7bd99c", "stroke": "#d7ffd4" },
+            { "id": "N3", "fill": "#90e494", "stroke": "#dbffd8" },
+            { "id": "N4", "fill": "#7ed883", "stroke": "#c4ffc8" }
+          ],
+          "hotspot": { "x": 64, "y": 49, "radius": 7, "label": "Sem risco" }
+        }
+      ],
+      "alerts": [
+        {
+          "id": "AL-3158",
+          "when": "2026-04-28 08:05",
+          "severity": "Baixa",
+          "sent": false,
+          "summary": "Variacao leve em borda leste, abaixo do limiar de disparo.",
+          "snapshotId": "SN-TL01-03"
+        }
+      ]
+    },
+    {
+      "id": "TL-02",
+      "name": "Pivoto 4",
+      "farmName": "Fazenda Horizonte",
+      "crop": "Milho",
+      "hectares": 94,
+      "municipality": "Lucas do Rio Verde, MT",
+      "center": {
+        "lat": -13.0741,
+        "lon": -55.911
+      },
+      "coordinatesText": "-13.0741, -55.9110",
+      "agronomist": "Rafael Gama",
+      "whatsapp": "+55 65 99931-8342",
+      "notes": "Revisar setor sudoeste em visitas rotineiras.",
+      "snapshots": [
+        {
+          "id": "SN-TL02-01",
+          "capturedAt": "2026-04-12 08:08",
+          "ndvi": 0.76,
+          "delta": 0.0,
+          "status": "green",
+          "affectedAreaHa": 4,
+          "issue": "Pivoto em equilibrio com pequenas manchas secas.",
+          "cloudCoverage": 15,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL02-0412",
+          "weather": {
+            "tempC": 31,
+            "rainMm": 5,
+            "humidity": 66,
+            "windKmh": 12
+          },
+          "zones": [
+            { "id": "P1", "fill": "#93dc79", "stroke": "#d9ffca" },
+            { "id": "P2", "fill": "#f3c367", "stroke": "#ffe1a1" },
+            { "id": "P3", "fill": "#ffb55c", "stroke": "#ffe1a1" },
+            { "id": "P4", "fill": "#a4de88", "stroke": "#ddffd2" }
+          ],
+          "hotspot": { "x": 61, "y": 63, "radius": 14, "label": "Sudoeste" }
+        },
+        {
+          "id": "SN-TL02-02",
+          "capturedAt": "2026-04-20 08:10",
+          "ndvi": 0.73,
+          "delta": -0.03,
+          "status": "green",
+          "affectedAreaHa": 7,
+          "issue": "Inicio de perda localizada no setor sudoeste.",
+          "cloudCoverage": 11,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL02-0420",
+          "weather": {
+            "tempC": 32,
+            "rainMm": 3,
+            "humidity": 63,
+            "windKmh": 13
+          },
+          "zones": [
+            { "id": "P1", "fill": "#93dc79", "stroke": "#d9ffca" },
+            { "id": "P2", "fill": "#f3c367", "stroke": "#ffe1a1" },
+            { "id": "P3", "fill": "#ffb55c", "stroke": "#ffe1a1" },
+            { "id": "P4", "fill": "#a4de88", "stroke": "#ddffd2" }
+          ],
+          "hotspot": { "x": 60, "y": 65, "radius": 16, "label": "Setor 3" }
+        },
+        {
+          "id": "SN-TL02-03",
+          "capturedAt": "2026-04-30 08:11",
+          "ndvi": 0.66,
+          "delta": -0.07,
+          "status": "yellow",
+          "affectedAreaHa": 10,
+          "issue": "Reboleira amarela persistente e perda de vigor em ampliacao.",
+          "cloudCoverage": 10,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL02-0430",
+          "weather": {
+            "tempC": 33,
+            "rainMm": 1,
+            "humidity": 58,
+            "windKmh": 15
+          },
+          "zones": [
+            { "id": "P1", "fill": "#93dc79", "stroke": "#d9ffca" },
+            { "id": "P2", "fill": "#f3c367", "stroke": "#ffe1a1" },
+            { "id": "P3", "fill": "#ffb55c", "stroke": "#ffe1a1" },
+            { "id": "P4", "fill": "#a4de88", "stroke": "#ddffd2" }
+          ],
+          "hotspot": { "x": 58, "y": 67, "radius": 18, "label": "Sudoeste critico" }
+        },
+        {
+          "id": "SN-TL02-04",
+          "capturedAt": "2026-05-05 08:15",
+          "ndvi": 0.58,
+          "delta": -0.08,
+          "status": "yellow",
+          "affectedAreaHa": 11,
+          "issue": "Queda localizada no setor sudoeste, sugerindo inicio de estresse hidrico.",
+          "cloudCoverage": 8,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL02-0505",
+          "weather": {
+            "tempC": 34,
+            "rainMm": 0,
+            "humidity": 55,
+            "windKmh": 16
+          },
+          "zones": [
+            { "id": "P1", "fill": "#93dc79", "stroke": "#d9ffca" },
+            { "id": "P2", "fill": "#f3c367", "stroke": "#ffe1a1" },
+            { "id": "P3", "fill": "#ffb55c", "stroke": "#ffe1a1" },
+            { "id": "P4", "fill": "#a4de88", "stroke": "#ddffd2" }
+          ],
+          "hotspot": { "x": 56, "y": 69, "radius": 20, "label": "Queda acelerada" }
+        }
+      ],
+      "alerts": [
+        {
+          "id": "AL-3194",
+          "when": "2026-05-05 08:18",
+          "severity": "Media",
+          "sent": true,
+          "summary": "Reducao localizada em 11 ha no setor sudoeste.",
+          "snapshotId": "SN-TL02-04"
+        }
+      ]
+    },
+    {
+      "id": "TL-03",
+      "name": "Fazenda Horizonte - Quadra 7",
+      "farmName": "Fazenda Horizonte",
+      "crop": "Soja",
+      "hectares": 146,
+      "municipality": "Campo Novo do Parecis, MT",
+      "center": {
+        "lat": -13.6454,
+        "lon": -57.8739
+      },
+      "coordinatesText": "-13.6454, -57.8739",
+      "agronomist": "Ana Luiza Prado",
+      "whatsapp": "+55 65 99871-6621",
+      "notes": "Prioridade alta em qualquer queda adicional.",
+      "snapshots": [
+        {
+          "id": "SN-TL03-01",
+          "capturedAt": "2026-04-12 08:12",
+          "ndvi": 0.82,
+          "delta": 0.0,
+          "status": "green",
+          "affectedAreaHa": 5,
+          "issue": "Talhao uniforme sem hotspot dominante.",
+          "cloudCoverage": 14,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL03-0412",
+          "weather": {
+            "tempC": 29,
+            "rainMm": 9,
+            "humidity": 73,
+            "windKmh": 8
+          },
+          "zones": [
+            { "id": "Q1", "fill": "#9edc7a", "stroke": "#d8ffc7" },
+            { "id": "Q2", "fill": "#f6c45f", "stroke": "#ffe8a5" },
+            { "id": "Q3", "fill": "#ff6b6b", "stroke": "#ffd2d2" },
+            { "id": "Q4", "fill": "#ff8a58", "stroke": "#ffe2c1" }
+          ],
+          "hotspot": { "x": 47, "y": 56, "radius": 16, "label": "Centro inicial" }
+        },
+        {
+          "id": "SN-TL03-02",
+          "capturedAt": "2026-04-20 08:16",
+          "ndvi": 0.73,
+          "delta": -0.09,
+          "status": "yellow",
+          "affectedAreaHa": 14,
+          "issue": "Centro com perda de vigor acima da media do talhao.",
+          "cloudCoverage": 12,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL03-0420",
+          "weather": {
+            "tempC": 30,
+            "rainMm": 4,
+            "humidity": 68,
+            "windKmh": 9
+          },
+          "zones": [
+            { "id": "Q1", "fill": "#9edc7a", "stroke": "#d8ffc7" },
+            { "id": "Q2", "fill": "#f6c45f", "stroke": "#ffe8a5" },
+            { "id": "Q3", "fill": "#ff6b6b", "stroke": "#ffd2d2" },
+            { "id": "Q4", "fill": "#ff8a58", "stroke": "#ffe2c1" }
+          ],
+          "hotspot": { "x": 45, "y": 58, "radius": 24, "label": "Centro em alerta" }
+        },
+        {
+          "id": "SN-TL03-03",
+          "capturedAt": "2026-04-30 08:23",
+          "ndvi": 0.55,
+          "delta": -0.18,
+          "status": "red",
+          "affectedAreaHa": 24,
+          "issue": "Perda progressiva no setor central. Recomendado vistoriar em ate 24 horas.",
+          "cloudCoverage": 9,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL03-0430",
+          "weather": {
+            "tempC": 31,
+            "rainMm": 1,
+            "humidity": 60,
+            "windKmh": 11
+          },
+          "zones": [
+            { "id": "Q1", "fill": "#9edc7a", "stroke": "#d8ffc7" },
+            { "id": "Q2", "fill": "#f6c45f", "stroke": "#ffe8a5" },
+            { "id": "Q3", "fill": "#ff6b6b", "stroke": "#ffd2d2" },
+            { "id": "Q4", "fill": "#ff8a58", "stroke": "#ffe2c1" }
+          ],
+          "hotspot": { "x": 43, "y": 60, "radius": 30, "label": "Hotspot central" }
+        },
+        {
+          "id": "SN-TL03-04",
+          "capturedAt": "2026-05-05 08:22",
+          "ndvi": 0.39,
+          "delta": -0.16,
+          "status": "red",
+          "affectedAreaHa": 32,
+          "issue": "Queda abrupta concentrada no miolo do talhao. Sinal compativel com estresse hidrico ou ataque inicial de praga.",
+          "cloudCoverage": 6,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2A-TL03-0505",
+          "weather": {
+            "tempC": 33,
+            "rainMm": 0,
+            "humidity": 54,
+            "windKmh": 14
+          },
+          "zones": [
+            { "id": "Q1", "fill": "#9edc7a", "stroke": "#d8ffc7" },
+            { "id": "Q2", "fill": "#f6c45f", "stroke": "#ffe8a5" },
+            { "id": "Q3", "fill": "#ff6b6b", "stroke": "#ffd2d2" },
+            { "id": "Q4", "fill": "#ff8a58", "stroke": "#ffe2c1" }
+          ],
+          "hotspot": { "x": 41, "y": 61, "radius": 36, "label": "Area mais critica" }
+        }
+      ],
+      "alerts": [
+        {
+          "id": "AL-3169",
+          "when": "2026-04-30 08:23",
+          "severity": "Media",
+          "sent": true,
+          "summary": "Perda progressiva de vigor detectada no miolo do talhao.",
+          "snapshotId": "SN-TL03-03"
+        },
+        {
+          "id": "AL-3201",
+          "when": "2026-05-05 08:24",
+          "severity": "Alta",
+          "sent": true,
+          "summary": "Queda de NDVI de 0.55 para 0.39. Hotspot vermelho confirmado no setor central.",
+          "snapshotId": "SN-TL03-04"
+        }
+      ]
+    },
+    {
+      "id": "TL-04",
+      "name": "Corredor Leste",
+      "farmName": "Fazenda Boa Vista",
+      "crop": "Milho",
+      "hectares": 71,
+      "municipality": "Nova Mutum, MT",
+      "center": {
+        "lat": -13.8264,
+        "lon": -56.0749
+      },
+      "coordinatesText": "-13.8264, -56.0749",
+      "agronomist": "Marina Costa",
+      "whatsapp": "+55 65 99971-1221",
+      "notes": "Area longa com boa janela de leitura.",
+      "snapshots": [
+        {
+          "id": "SN-TL04-01",
+          "capturedAt": "2026-04-12 08:03",
+          "ndvi": 0.68,
+          "delta": 0.0,
+          "status": "green",
+          "affectedAreaHa": 3,
+          "issue": "Indice dentro da faixa esperada para a fase atual.",
+          "cloudCoverage": 10,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL04-0412",
+          "weather": {
+            "tempC": 28,
+            "rainMm": 7,
+            "humidity": 70,
+            "windKmh": 9
+          },
+          "zones": [
+            { "id": "L1", "fill": "#88de89", "stroke": "#d8ffd8" },
+            { "id": "L2", "fill": "#7fd18c", "stroke": "#c8ffd7" },
+            { "id": "L3", "fill": "#99e09f", "stroke": "#ddffe2" },
+            { "id": "L4", "fill": "#90dd8c", "stroke": "#d7ffd5" }
+          ],
+          "hotspot": { "x": 69, "y": 49, "radius": 9, "label": "Sem prioridade" }
+        },
+        {
+          "id": "SN-TL04-02",
+          "capturedAt": "2026-04-20 08:04",
+          "ndvi": 0.7,
+          "delta": 0.02,
+          "status": "green",
+          "affectedAreaHa": 2,
+          "issue": "Resposta vegetativa subindo de forma constante.",
+          "cloudCoverage": 8,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL04-0420",
+          "weather": {
+            "tempC": 27,
+            "rainMm": 11,
+            "humidity": 75,
+            "windKmh": 8
+          },
+          "zones": [
+            { "id": "L1", "fill": "#88de89", "stroke": "#d8ffd8" },
+            { "id": "L2", "fill": "#7fd18c", "stroke": "#c8ffd7" },
+            { "id": "L3", "fill": "#99e09f", "stroke": "#ddffe2" },
+            { "id": "L4", "fill": "#90dd8c", "stroke": "#d7ffd5" }
+          ],
+          "hotspot": { "x": 67, "y": 48, "radius": 8, "label": "Sem risco" }
+        },
+        {
+          "id": "SN-TL04-03",
+          "capturedAt": "2026-04-30 08:05",
+          "ndvi": 0.74,
+          "delta": 0.04,
+          "status": "green",
+          "affectedAreaHa": 2,
+          "issue": "Indice sustentado com boa distribuicao espacial.",
+          "cloudCoverage": 7,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL04-0430",
+          "weather": {
+            "tempC": 26,
+            "rainMm": 15,
+            "humidity": 79,
+            "windKmh": 7
+          },
+          "zones": [
+            { "id": "L1", "fill": "#88de89", "stroke": "#d8ffd8" },
+            { "id": "L2", "fill": "#7fd18c", "stroke": "#c8ffd7" },
+            { "id": "L3", "fill": "#99e09f", "stroke": "#ddffe2" },
+            { "id": "L4", "fill": "#90dd8c", "stroke": "#d7ffd5" }
+          ],
+          "hotspot": { "x": 65, "y": 47, "radius": 7, "label": "Sem risco" }
+        },
+        {
+          "id": "SN-TL04-04",
+          "capturedAt": "2026-05-05 08:05",
+          "ndvi": 0.77,
+          "delta": 0.03,
+          "status": "green",
+          "affectedAreaHa": 2,
+          "issue": "Indice dentro da faixa ideal.",
+          "cloudCoverage": 5,
+          "source": "Sentinel-2 L2A",
+          "resolutionM": 10,
+          "sceneId": "S2B-TL04-0505",
+          "weather": {
+            "tempC": 25,
+            "rainMm": 9,
+            "humidity": 81,
+            "windKmh": 6
+          },
+          "zones": [
+            { "id": "L1", "fill": "#88de89", "stroke": "#d8ffd8" },
+            { "id": "L2", "fill": "#7fd18c", "stroke": "#c8ffd7" },
+            { "id": "L3", "fill": "#99e09f", "stroke": "#ddffe2" },
+            { "id": "L4", "fill": "#90dd8c", "stroke": "#d7ffd5" }
+          ],
+          "hotspot": { "x": 63, "y": 46, "radius": 6, "label": "Monitoramento normal" }
+        }
+      ],
+      "alerts": []
+    }
+  ],
+  "alerts": [
+    {
+      "id": "AL-3201",
+      "plotId": "TL-03",
+      "plotName": "Fazenda Horizonte - Quadra 7",
+      "when": "2026-05-05 08:24",
+      "severity": "Alta",
+      "sent": true,
+      "summary": "Queda de NDVI de 0.55 para 0.39. Hotspot vermelho confirmado no setor central.",
+      "snapshotId": "SN-TL03-04"
+    },
+    {
+      "id": "AL-3194",
+      "plotId": "TL-02",
+      "plotName": "Pivoto 4",
+      "when": "2026-05-05 08:18",
+      "severity": "Media",
+      "sent": true,
+      "summary": "Reducao localizada em 11 ha no setor sudoeste.",
+      "snapshotId": "SN-TL02-04"
+    },
+    {
+      "id": "AL-3169",
+      "plotId": "TL-03",
+      "plotName": "Fazenda Horizonte - Quadra 7",
+      "when": "2026-04-30 08:23",
+      "severity": "Media",
+      "sent": true,
+      "summary": "Perda progressiva de vigor detectada no miolo do talhao.",
+      "snapshotId": "SN-TL03-03"
+    },
+    {
+      "id": "AL-3158",
+      "plotId": "TL-01",
+      "plotName": "Talhao Norte",
+      "when": "2026-04-28 08:05",
+      "severity": "Baixa",
+      "sent": false,
+      "summary": "Variacao leve em borda leste, abaixo do limiar de disparo.",
+      "snapshotId": "SN-TL01-03"
+    }
+  ]
+}
