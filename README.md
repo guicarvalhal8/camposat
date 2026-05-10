@@ -13,6 +13,7 @@ O projeto hoje funciona como um MVP local com:
 - analise individual e em lote
 - historico de alertas
 - backend local em Python com persistencia em SQLite
+- modelagem relacional inicial entre agronomo, fazenda e talhao
 - fallback offline no frontend quando a API nao estiver disponivel
 
 ## Stack
@@ -29,7 +30,7 @@ O projeto hoje funciona como um MVP local com:
 - [styles.css](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/styles.css)
 - [server.py](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/server.py)
 - [data/seed_state.json](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/data/seed_state.json)
-- `data/camposat.db` (gerado em runtime)
+- `data/camposat.db` (gerado em runtime com usuarios, fazendas, talhoes e alertas)
 
 ## Como rodar
 
@@ -79,12 +80,12 @@ Senha demo:
 
 ## Proximos passos
 
-1. migrar persistencia de arquivos para `SQLite` ou `PostgreSQL`
+1. mover sessoes de memoria para persistencia mais robusta
 2. adicionar mapa real com geometria de talhao
 3. integrar imagens de satelite e NDVI real
 4. conectar clima real
 5. integrar envio de alerta por WhatsApp
-6. mover sessoes de memoria para persistencia mais robusta
+6. evoluir de `SQLite` para `PostgreSQL` com PostGIS
 
 ## Observacao
 

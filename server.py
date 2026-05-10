@@ -50,7 +50,7 @@ AUTH_SEED_USERS = [
         "name": "Ana Luiza Prado",
         "email": "ana@camposat.demo",
         "password": "camposat123",
-        "farmName": "Fazenda Santa Helena",
+        "farmName": "Fazenda Horizonte",
         "whatsapp": "+55 66 99912-4508",
     },
 ]
@@ -136,9 +136,21 @@ def init_db():
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS farms (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                municipality TEXT DEFAULT '',
+                whatsapp TEXT DEFAULT '',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id),
+                UNIQUE(owner_user_id, name)
+            );
+
             CREATE TABLE IF NOT EXISTS plots (
                 id TEXT PRIMARY KEY,
                 owner_user_id TEXT NOT NULL,
+                farm_id TEXT,
                 name TEXT NOT NULL,
                 farm_name TEXT NOT NULL,
                 crop TEXT NOT NULL,
@@ -152,7 +164,8 @@ def init_db():
                 notes TEXT DEFAULT '',
                 snapshots_json TEXT NOT NULL,
                 alerts_json TEXT NOT NULL,
-                FOREIGN KEY(owner_user_id) REFERENCES users(id)
+                FOREIGN KEY(owner_user_id) REFERENCES users(id),
+                FOREIGN KEY(farm_id) REFERENCES farms(id)
             );
 
             CREATE TABLE IF NOT EXISTS alerts (
@@ -168,11 +181,20 @@ def init_db():
             );
             """
         )
+        ensure_plot_farm_column(connection)
+        backfill_farms(connection)
 
         user_count = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
         plot_count = connection.execute("SELECT COUNT(*) FROM plots").fetchone()[0]
         if user_count == 0 and plot_count == 0:
             seed_database(connection)
+
+
+def ensure_plot_farm_column(connection):
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(plots)").fetchall()}
+    if "farm_id" not in columns:
+        connection.execute("ALTER TABLE plots ADD COLUMN farm_id TEXT")
+        connection.commit()
 
 
 def set_meta(connection, key, value):
@@ -202,6 +224,7 @@ def seed_database(connection):
 
     connection.execute("DELETE FROM alerts")
     connection.execute("DELETE FROM plots")
+    connection.execute("DELETE FROM farms")
     connection.execute("DELETE FROM users")
     connection.execute("DELETE FROM meta")
 
@@ -221,22 +244,39 @@ def seed_database(connection):
                 user["createdAt"],
             ),
         )
+        if user["farmName"]:
+            ensure_farm(
+                connection,
+                user["id"],
+                user["farmName"],
+                municipality="",
+                whatsapp=user["whatsapp"],
+                created_at=user["createdAt"],
+            )
 
     for plot in seed_state["plots"]:
         owner_user_id = owner_by_name.get(plot.get("agronomist"))
         center = plot.get("center") or {"lat": 0, "lon": 0}
+        farm_id = ensure_farm(
+            connection,
+            owner_user_id,
+            plot["farmName"],
+            municipality=plot["municipality"],
+            whatsapp=plot.get("whatsapp", ""),
+        )
         connection.execute(
             """
             INSERT INTO plots(
-                id, owner_user_id, name, farm_name, crop, hectares, municipality,
+                id, owner_user_id, farm_id, name, farm_name, crop, hectares, municipality,
                 center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
                 snapshots_json, alerts_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plot["id"],
                 owner_user_id,
+                farm_id,
                 plot["name"],
                 plot["farmName"],
                 plot["crop"],
@@ -302,6 +342,12 @@ def next_user_id(connection):
     return f"AG-{max(ids, default=0) + 1:02d}"
 
 
+def next_farm_id(connection):
+    rows = connection.execute("SELECT id FROM farms").fetchall()
+    ids = [int(row["id"].split("-")[1]) for row in rows if "-" in row["id"]]
+    return f"FM-{max(ids, default=0) + 1:02d}"
+
+
 def row_to_user(row):
     return {
         "id": row["id"],
@@ -314,12 +360,29 @@ def row_to_user(row):
     }
 
 
-def row_to_plot(row):
+def row_to_farm(row):
+    plot_count = row["plot_count"] if "plot_count" in row.keys() else 0
+    area_total = row["area_total"] if "area_total" in row.keys() else 0
     return {
         "id": row["id"],
         "ownerUserId": row["owner_user_id"],
         "name": row["name"],
-        "farmName": row["farm_name"],
+        "municipality": row["municipality"],
+        "whatsapp": row["whatsapp"],
+        "createdAt": row["created_at"],
+        "plotCount": int(plot_count or 0),
+        "hectares": int(area_total or 0),
+    }
+
+
+def row_to_plot(row):
+    farm_name = row["resolved_farm_name"] if "resolved_farm_name" in row.keys() and row["resolved_farm_name"] else row["farm_name"]
+    return {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "farmId": row["farm_id"],
+        "name": row["name"],
+        "farmName": farm_name,
         "crop": row["crop"],
         "hectares": row["hectares"],
         "municipality": row["municipality"],
@@ -356,14 +419,128 @@ def fetch_user_by_email(connection, email):
     return row_to_user(row) if row else None
 
 
+def fetch_farm_by_owner_and_name(connection, owner_user_id, farm_name):
+    row = connection.execute(
+        """
+        SELECT *
+        FROM farms
+        WHERE owner_user_id = ? AND lower(name) = lower(?)
+        """,
+        (owner_user_id, farm_name),
+    ).fetchone()
+    return row_to_farm(row) if row else None
+
+
+def ensure_farm(connection, owner_user_id, farm_name, municipality="", whatsapp="", created_at=None):
+    name = str(farm_name or "").strip()
+    if not owner_user_id or not name:
+        return None
+
+    existing = fetch_farm_by_owner_and_name(connection, owner_user_id, name)
+    if existing:
+        if (municipality and not existing["municipality"]) or (whatsapp and not existing["whatsapp"]):
+            connection.execute(
+                """
+                UPDATE farms
+                SET municipality = CASE WHEN municipality = '' THEN ? ELSE municipality END,
+                    whatsapp = CASE WHEN whatsapp = '' THEN ? ELSE whatsapp END
+                WHERE id = ?
+                """,
+                (municipality, whatsapp, existing["id"]),
+            )
+        return existing["id"]
+
+    farm_id = next_farm_id(connection)
+    connection.execute(
+        """
+        INSERT INTO farms(id, owner_user_id, name, municipality, whatsapp, created_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+        """,
+        (
+            farm_id,
+            owner_user_id,
+            name,
+            municipality,
+            whatsapp,
+            created_at or now_label(),
+        ),
+    )
+    return farm_id
+
+
+def backfill_farms(connection):
+    dirty = False
+    user_rows = connection.execute("SELECT * FROM users").fetchall()
+    for row in user_rows:
+        user = row_to_user(row)
+        if user["farmName"]:
+            farm_id = ensure_farm(
+                connection,
+                user["id"],
+                user["farmName"],
+                municipality="",
+                whatsapp=user["whatsapp"],
+                created_at=user["createdAt"],
+            )
+            dirty = dirty or bool(farm_id)
+
+    plot_rows = connection.execute("SELECT id, owner_user_id, farm_id, farm_name, municipality, whatsapp FROM plots").fetchall()
+    for row in plot_rows:
+        farm_id = ensure_farm(
+            connection,
+            row["owner_user_id"],
+            row["farm_name"],
+            municipality=row["municipality"],
+            whatsapp=row["whatsapp"],
+        )
+        if farm_id and row["farm_id"] != farm_id:
+            connection.execute("UPDATE plots SET farm_id = ? WHERE id = ?", (farm_id, row["id"]))
+            dirty = True
+
+    if dirty:
+        connection.commit()
+
+
 def fetch_plot_by_id(connection, plot_id):
-    row = connection.execute("SELECT * FROM plots WHERE id = ?", (plot_id,)).fetchone()
+    row = connection.execute(
+        """
+        SELECT plots.*, farms.name AS resolved_farm_name
+        FROM plots
+        LEFT JOIN farms ON farms.id = plots.farm_id
+        WHERE plots.id = ?
+        """,
+        (plot_id,),
+    ).fetchone()
     return row_to_plot(row) if row else None
+
+
+def fetch_portfolio_farms(connection, user_id):
+    rows = connection.execute(
+        """
+        SELECT
+            farms.*,
+            COUNT(plots.id) AS plot_count,
+            COALESCE(SUM(plots.hectares), 0) AS area_total
+        FROM farms
+        LEFT JOIN plots ON plots.farm_id = farms.id
+        WHERE farms.owner_user_id = ?
+        GROUP BY farms.id
+        ORDER BY farms.name COLLATE NOCASE ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row_to_farm(row) for row in rows]
 
 
 def fetch_portfolio_plots(connection, user_id):
     rows = connection.execute(
-        "SELECT * FROM plots WHERE owner_user_id = ? ORDER BY id ASC",
+        """
+        SELECT plots.*, farms.name AS resolved_farm_name
+        FROM plots
+        LEFT JOIN farms ON farms.id = plots.farm_id
+        WHERE plots.owner_user_id = ?
+        ORDER BY plots.id ASC
+        """,
         (user_id,),
     ).fetchall()
     return [row_to_plot(row) for row in rows]
@@ -388,13 +565,14 @@ def save_plot(connection, plot):
     connection.execute(
         """
         UPDATE plots
-        SET owner_user_id = ?, name = ?, farm_name = ?, crop = ?, hectares = ?, municipality = ?,
+        SET owner_user_id = ?, farm_id = ?, name = ?, farm_name = ?, crop = ?, hectares = ?, municipality = ?,
             center_lat = ?, center_lon = ?, coordinates_text = ?, agronomist = ?, whatsapp = ?, notes = ?,
             snapshots_json = ?, alerts_json = ?
         WHERE id = ?
         """,
         (
             plot["ownerUserId"],
+            plot.get("farmId"),
             plot["name"],
             plot["farmName"],
             plot["crop"],
@@ -520,6 +698,7 @@ def portfolio_payload(connection, user):
         },
         "providers": seed_providers(),
         "market": REGISTRY.market.snapshot(seed_market_snapshot()),
+        "farms": fetch_portfolio_farms(connection, user["id"]),
         "plots": fetch_portfolio_plots(connection, user["id"]),
         "alerts": fetch_portfolio_alerts(connection, user["id"]),
         "auth": {"user": public_user(user)},
@@ -587,19 +766,30 @@ def create_plot(connection, payload, user):
     }
     base_ndvi = 0.72 if crop == "Soja" else 0.68
     initial_weather = REGISTRY.weather.generate({"crop": crop}, "green", base_ndvi)
+    farm_name = payload.get("farmName", user.get("farmName", "Novo cadastro")).strip() or user.get("farmName", "Novo cadastro")
+    municipality = payload.get("municipality", "Novo municipio").strip() or "Novo municipio"
+    whatsapp = payload.get("whatsapp", "").strip() or user.get("whatsapp", "")
+    farm_id = ensure_farm(
+        connection,
+        user["id"],
+        farm_name,
+        municipality=municipality,
+        whatsapp=whatsapp,
+    )
 
     plot = {
         "id": plot_id,
         "ownerUserId": user["id"],
+        "farmId": farm_id,
         "name": payload.get("plotName", "").strip(),
-        "farmName": payload.get("farmName", user.get("farmName", "Novo cadastro")).strip() or user.get("farmName", "Novo cadastro"),
+        "farmName": farm_name,
         "crop": crop,
         "hectares": int(payload.get("hectares", 0)),
-        "municipality": payload.get("municipality", "Novo municipio").strip() or "Novo municipio",
+        "municipality": municipality,
         "center": center,
         "coordinatesText": f"{center['lat']:.4f}, {center['lon']:.4f}",
         "agronomist": user["name"],
-        "whatsapp": payload.get("whatsapp", "").strip() or user.get("whatsapp", ""),
+        "whatsapp": whatsapp,
         "notes": payload.get("notes", "").strip(),
         "snapshots": [
             {
@@ -630,15 +820,16 @@ def create_plot(connection, payload, user):
     connection.execute(
         """
         INSERT INTO plots(
-            id, owner_user_id, name, farm_name, crop, hectares, municipality,
+            id, owner_user_id, farm_id, name, farm_name, crop, hectares, municipality,
             center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
             snapshots_json, alerts_json
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             plot["id"],
             plot["ownerUserId"],
+            plot["farmId"],
             plot["name"],
             plot["farmName"],
             plot["crop"],
@@ -827,6 +1018,15 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                         user["createdAt"],
                     ),
                 )
+                if user["farmName"]:
+                    ensure_farm(
+                        connection,
+                        user["id"],
+                        user["farmName"],
+                        municipality="",
+                        whatsapp=user["whatsapp"],
+                        created_at=user["createdAt"],
+                    )
                 connection.commit()
 
             session_id = secrets.token_urlsafe(32)

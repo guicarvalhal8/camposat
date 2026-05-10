@@ -28,6 +28,7 @@ const state = {
   busy: false,
   error: null,
   offlineMode: false,
+  farms: [],
   plots: [],
   alerts: [],
   market: null,
@@ -99,6 +100,7 @@ async function loadBootstrap() {
 
 function applyBootstrapPayload(payload, options = {}) {
   state.offlineMode = Boolean(options.offlineMode);
+  state.farms = payload.farms || [];
   state.plots = payload.plots || [];
   state.alerts = payload.alerts || [];
   state.market = payload.market || null;
@@ -445,6 +447,35 @@ function buildOfflineSeed() {
       ]
     })
   ];
+  const ownerIdByAgronomist = {
+    "Marina Costa": "AG-01",
+    "Rafael Gama": "AG-02",
+    "Bianca Salles": "AG-03",
+    "Ana Luiza Prado": "AG-04"
+  };
+
+  const farms = plots
+    .reduce((items, plot) => {
+      const ownerUserId = ownerIdByAgronomist[plot.agronomist] || plot.agronomist;
+      const existing = items.find((farm) => farm.ownerUserId === ownerUserId && farm.name === plot.farmName);
+      if (existing) {
+        existing.plotCount += 1;
+        existing.hectares += plot.hectares;
+        return items;
+      }
+      items.push({
+        id: `FM-${String(items.length + 1).padStart(2, "0")}`,
+        ownerUserId,
+        name: plot.farmName,
+        municipality: plot.municipality,
+        whatsapp: plot.whatsapp,
+        createdAt: nowLabel(),
+        plotCount: 1,
+        hectares: plot.hectares
+      });
+      return items;
+    }, [])
+    .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
 
   return {
     meta: {
@@ -467,6 +498,7 @@ function buildOfflineSeed() {
         source: "Feed demo local"
       }
     },
+    farms,
     plots,
     alerts: plots
       .flatMap((plot) =>
@@ -564,7 +596,7 @@ function buildAuthSeed() {
         name: "Ana Luiza Prado",
         email: "ana@camposat.demo",
         password: "camposat123",
-        farmName: "Fazenda Santa Helena",
+        farmName: "Fazenda Horizonte",
         whatsapp: "+55 66 99912-4508",
         createdAt: nowLabel()
       }
@@ -847,7 +879,7 @@ function renderAuthShell() {
               </form>
               <div class="auth-helper">
                 <strong>Contas demo</strong>
-                <p>Use marina@camposat.demo, rafael@camposat.demo ou bianca@camposat.demo com a senha camposat123.</p>
+                <p>Use marina@camposat.demo, rafael@camposat.demo, bianca@camposat.demo ou ana@camposat.demo com a senha camposat123.</p>
               </div>
             `
         }
@@ -857,6 +889,7 @@ function renderAuthShell() {
 }
 
 function renderSidebar(route) {
+  const portfolioFarms = getPortfolioFarms();
   const portfolioPlots = getPortfolioPlots();
   const portfolioAlerts = getPortfolioAlerts();
   const activeAgronomist = getActiveAgronomist();
@@ -951,7 +984,7 @@ function renderSidebar(route) {
         <div class="sidebar-status-block">
           <span class="eyebrow">Resumo rapido</span>
           <h3>${portfolioPlots.length} talhoes monitorados</h3>
-          <p class="tiny sidebar-status-copy">${activeAgronomist || "Sem responsavel"} acompanha ${portfolioPlots.length} fazendas/talhoes e ${redAlerts} alertas altos.</p>
+          <p class="tiny sidebar-status-copy">${activeAgronomist || "Sem responsavel"} acompanha ${portfolioFarms.length} fazendas, ${portfolioPlots.length} talhoes e ${redAlerts} alertas altos.</p>
         </div>
 
         <div class="sidebar-status-block">
@@ -1021,10 +1054,10 @@ function renderTopbar(route, activePlot) {
       text: "Acompanhe so as fazendas e talhoes vinculados ao responsavel selecionado."
     };
     modeLabel = "monitoramento";
-    primaryKpiLabel = "Talhoes ativos";
-    primaryKpiValue = String(getPortfolioPlots().length);
-    secondaryKpiLabel = "Criticos";
-    secondaryKpiValue = String(stats.redCount);
+    primaryKpiLabel = "Fazendas";
+    primaryKpiValue = String(stats.farmCount);
+    secondaryKpiLabel = "Talhoes ativos";
+    secondaryKpiValue = String(getPortfolioPlots().length);
   }
 
   return `
@@ -2319,6 +2352,38 @@ function getPortfolioPlots() {
   return state.plots.filter((plot) => plot.agronomist === agronomist);
 }
 
+function getPortfolioFarms() {
+  const currentUser = getCurrentUser();
+  if (!currentUser) return [];
+  if (state.farms.length) {
+    const farms = state.farms.filter((farm) => farm.ownerUserId === currentUser.id);
+    if (farms.length) {
+      return farms;
+    }
+  }
+
+  const seen = new Map();
+  for (const plot of getPortfolioPlots()) {
+    const key = `${currentUser.id}::${plot.farmName}`;
+    const current = seen.get(key);
+    if (current) {
+      current.plotCount += 1;
+      current.hectares += plot.hectares;
+      continue;
+    }
+    seen.set(key, {
+      id: key,
+      ownerUserId: currentUser.id,
+      name: plot.farmName,
+      municipality: plot.municipality,
+      whatsapp: plot.whatsapp,
+      plotCount: 1,
+      hectares: plot.hectares
+    });
+  }
+  return [...seen.values()].sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+}
+
 function getPortfolioAlerts() {
   const plotIds = new Set(getPortfolioPlots().map((plot) => plot.id));
   return state.alerts.filter((alert) => plotIds.has(alert.plotId));
@@ -2345,6 +2410,7 @@ function getFilteredAlerts() {
 }
 
 function getDashboardStats() {
+  const portfolioFarms = getPortfolioFarms();
   const portfolioPlots = getPortfolioPlots();
   const portfolioAlerts = getPortfolioAlerts();
   const latestScenes = portfolioPlots.map(getLatestSnapshot);
@@ -2358,6 +2424,7 @@ function getDashboardStats() {
     ? latestScenes.reduce((sum, scene) => sum + scene.ndvi, 0) / latestScenes.length
     : 0;
   return {
+    farmCount: portfolioFarms.length,
     greenCount,
     yellowCount,
     redCount,
