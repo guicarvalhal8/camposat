@@ -49,6 +49,7 @@ const state = {
 };
 
 let memoryOfflineState = null;
+let detailMap = null;
 
 const app = document.getElementById("app");
 
@@ -692,6 +693,7 @@ function normalizeEmail(value) {
 }
 
 function render() {
+  teardownLiveMap();
   const route = getRoute();
   const portfolioPlots = getPortfolioPlots();
   const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
@@ -723,6 +725,190 @@ function render() {
     </div>
     ${renderToast()}
   `;
+  mountLiveMap(route, activePlot);
+}
+
+function teardownLiveMap() {
+  if (detailMap) {
+    detailMap.remove();
+    detailMap = null;
+  }
+}
+
+function mountLiveMap(route, activePlot) {
+  if (route.view !== "detail" || !activePlot) return;
+  const container = document.getElementById("detail-live-map");
+  if (!container || typeof window.maplibregl === "undefined") return;
+
+  const scene = getActiveScene(activePlot);
+  const layers = getLayers(activePlot.id);
+  const geometry = buildPlotGeometry(activePlot, scene);
+  const bounds = new window.maplibregl.LngLatBounds();
+  geometry.outline.coordinates[0].forEach((coordinate) => bounds.extend(coordinate));
+
+  detailMap = new window.maplibregl.Map({
+    container,
+    style: buildMapStyle(layers),
+    center: [activePlot.center.lon, activePlot.center.lat],
+    zoom: 15.6,
+    pitch: layers.rgb ? 42 : 14,
+    bearing: geometry.bearing,
+    attributionControl: false
+  });
+
+  detailMap.addControl(
+    new window.maplibregl.NavigationControl({
+      showCompass: true,
+      visualizePitch: true
+    }),
+    "top-right"
+  );
+  detailMap.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+  detailMap.on("load", () => {
+    detailMap.addSource("plot-outline", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: [
+          {
+            type: "Feature",
+            properties: {
+              name: activePlot.name,
+              farmName: activePlot.farmName
+            },
+            geometry: geometry.outline
+          }
+        ]
+      }
+    });
+    detailMap.addSource("plot-zones", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: geometry.zones
+      }
+    });
+    detailMap.addSource("plot-grid", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: geometry.grid
+      }
+    });
+    detailMap.addSource("plot-hotspot", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: [geometry.hotspot]
+      }
+    });
+
+    detailMap.addLayer({
+      id: "plot-outline-fill",
+      type: "fill",
+      source: "plot-outline",
+      paint: {
+        "fill-color": "#0d3d2b",
+        "fill-opacity": layers.ndvi ? 0.12 : 0.06
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-zones-fill",
+      type: "fill",
+      source: "plot-zones",
+      layout: {
+        visibility: layers.ndvi ? "visible" : "none"
+      },
+      paint: {
+        "fill-color": ["get", "fill"],
+        "fill-opacity": 0.55
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-zones-line",
+      type: "line",
+      source: "plot-zones",
+      layout: {
+        visibility: layers.ndvi ? "visible" : "none"
+      },
+      paint: {
+        "line-color": ["get", "stroke"],
+        "line-width": 2.2
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-grid-lines",
+      type: "line",
+      source: "plot-grid",
+      layout: {
+        visibility: layers.grid ? "visible" : "none"
+      },
+      paint: {
+        "line-color": "rgba(237, 247, 245, 0.48)",
+        "line-width": 1.2,
+        "line-dasharray": [1.2, 1.2]
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-outline-line",
+      type: "line",
+      source: "plot-outline",
+      paint: {
+        "line-color": "#e9fff4",
+        "line-width": 2.6
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-hotspot-glow",
+      type: "circle",
+      source: "plot-hotspot",
+      layout: {
+        visibility: layers.hotspots ? "visible" : "none"
+      },
+      paint: {
+        "circle-radius": 26,
+        "circle-color": "rgba(255, 107, 107, 0.22)"
+      }
+    });
+    detailMap.addLayer({
+      id: "plot-hotspot-core",
+      type: "circle",
+      source: "plot-hotspot",
+      layout: {
+        visibility: layers.hotspots ? "visible" : "none"
+      },
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#ffeaea",
+        "circle-stroke-width": 5,
+        "circle-stroke-color": "rgba(255, 107, 107, 0.78)"
+      }
+    });
+
+    detailMap.fitBounds(bounds, {
+      padding: { top: 96, right: 96, bottom: 96, left: 96 },
+      duration: 0,
+      maxZoom: 16.9
+    });
+
+    const popup = new window.maplibregl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      offset: 18,
+      className: "plot-popup"
+    }).setLngLat(geometry.hotspot.geometry.coordinates)
+      .setHTML(`<strong>${scene.hotspot.label}</strong><span>${scene.affectedAreaHa} ha em risco • NDVI ${scene.ndvi.toFixed(2)}</span>`)
+      .addTo(detailMap);
+
+    detailMap.on("mouseenter", "plot-hotspot-core", () => {
+      detailMap.getCanvas().style.cursor = "pointer";
+      popup.addTo(detailMap);
+    });
+    detailMap.on("mouseleave", "plot-hotspot-core", () => {
+      detailMap.getCanvas().style.cursor = "";
+    });
+  });
 }
 
 function getRoute() {
@@ -1360,6 +1546,7 @@ function renderDetailView(plot) {
   const sceneIndex = getSceneIndex(plot);
   const layers = getLayers(plot.id);
   const previousScene = sceneIndex > 0 ? plot.snapshots[sceneIndex - 1] : null;
+  const liveMapReady = typeof window.maplibregl !== "undefined";
 
   return `
     <div class="detail-layout">
@@ -1378,9 +1565,9 @@ function renderDetailView(plot) {
 
         <div class="map-toolbar">
           <div class="layer-row">
-            ${renderLayerToggle(plot.id, "rgb", "RGB", layers.rgb)}
+            ${renderLayerToggle(plot.id, "rgb", "Imagem", layers.rgb)}
             ${renderLayerToggle(plot.id, "ndvi", "NDVI", layers.ndvi)}
-            ${renderLayerToggle(plot.id, "grid", "Grid", layers.grid)}
+            ${renderLayerToggle(plot.id, "grid", "Grade", layers.grid)}
             ${renderLayerToggle(plot.id, "hotspots", "Hotspots", layers.hotspots)}
           </div>
           <div class="scene-row">
@@ -1397,7 +1584,7 @@ function renderDetailView(plot) {
           </div>
         </div>
 
-        <div class="map-canvas map-canvas-rich">
+        <div class="map-canvas map-canvas-rich ${liveMapReady ? "has-live-map" : ""}">
           ${renderDetailedMap(plot, scene, layers)}
           <div class="map-chips">
             <div class="map-chip-cluster">
@@ -2451,7 +2638,193 @@ function severityWeight(status) {
   return 1;
 }
 
+function buildMapStyle(layers) {
+  return {
+    version: 8,
+    sources: {
+      imagery: {
+        type: "raster",
+        tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+        tileSize: 256,
+        attribution: "Esri World Imagery"
+      },
+      osm: {
+        type: "raster",
+        tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+        tileSize: 256,
+        attribution: "OpenStreetMap contributors"
+      }
+    },
+    layers: [
+      {
+        id: "imagery-base",
+        type: "raster",
+        source: "imagery",
+        paint: {
+          "raster-opacity": layers.rgb ? 1 : 0
+        }
+      },
+      {
+        id: "osm-reference",
+        type: "raster",
+        source: "osm",
+        paint: {
+          "raster-opacity": layers.rgb ? 0.28 : 1
+        }
+      }
+    ]
+  };
+}
+
 function renderDetailedMap(plot, scene, layers) {
+  const hasMapLibre = typeof window.maplibregl !== "undefined";
+  return `
+    <div class="live-map-shell ${hasMapLibre ? "is-live" : "is-fallback"}">
+      <div id="detail-live-map" class="live-map" aria-label="Mapa do talhao"></div>
+      ${hasMapLibre ? "" : `<div class="map-shell-notice">Nao foi possivel carregar a biblioteca do mapa em tempo real. Exibindo a geometria de referencia do talhao.</div>`}
+      ${hasMapLibre ? "" : `<div class="map-fallback-visual">${renderDetailedMapFallback(plot, scene, layers)}</div>`}
+    </div>
+  `;
+}
+
+function hashPlotSeed(value) {
+  return [...String(value || "")]
+    .reduce((total, char) => total + char.charCodeAt(0), 0);
+}
+
+function metersToCoordinates(center, dxMeters, dyMeters) {
+  const latDelta = dyMeters / 111320;
+  const lonDelta = dxMeters / (111320 * Math.cos((center.lat * Math.PI) / 180));
+  return [center.lon + lonDelta, center.lat + latDelta];
+}
+
+function rotateOffsets(dx, dy, angleDegrees) {
+  const radians = (angleDegrees * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  return [
+    dx * cos - dy * sin,
+    dx * sin + dy * cos
+  ];
+}
+
+function localRingToCoordinates(center, ring, bearing) {
+  return ring.map(([dx, dy]) => {
+    const [rotatedX, rotatedY] = rotateOffsets(dx, dy, bearing);
+    return metersToCoordinates(center, rotatedX, rotatedY);
+  });
+}
+
+function buildPlotGeometry(plot, scene) {
+  const seed = hashPlotSeed(`${plot.id}-${plot.name}-${plot.farmName}`);
+  const aspect = 1.12 + (seed % 5) * 0.12;
+  const areaM2 = Math.max(12000, plot.hectares * 10000);
+  const widthMeters = Math.sqrt(areaM2 * aspect);
+  const heightMeters = areaM2 / widthMeters;
+  const bearing = -18 + (seed % 7) * 9;
+  const halfWidth = widthMeters / 2;
+  const halfHeight = heightMeters / 2;
+  const gap = Math.min(widthMeters, heightMeters) * 0.065;
+  const inset = Math.min(widthMeters, heightMeters) * 0.06;
+
+  const outlineLocal = [
+    [-halfWidth, -halfHeight],
+    [halfWidth, -halfHeight],
+    [halfWidth, halfHeight],
+    [-halfWidth, halfHeight],
+    [-halfWidth, -halfHeight]
+  ];
+
+  const zoneLocals = [
+    [
+      [-halfWidth + inset, -halfHeight + inset],
+      [-gap * 0.55, -halfHeight + inset * 0.9],
+      [-gap * 0.95, -gap * 0.2],
+      [-halfWidth + inset * 1.05, -gap * 0.35],
+      [-halfWidth + inset, -halfHeight + inset]
+    ],
+    [
+      [gap * 0.45, -halfHeight + inset * 0.7],
+      [halfWidth - inset, -halfHeight + inset * 1.15],
+      [halfWidth - inset * 0.9, -gap * 0.4],
+      [gap * 0.9, -gap * 0.05],
+      [gap * 0.45, -halfHeight + inset * 0.7]
+    ],
+    [
+      [-halfWidth + inset * 0.8, gap * 0.3],
+      [-gap * 0.9, gap * 0.15],
+      [-gap * 1.1, halfHeight - inset * 0.9],
+      [-halfWidth + inset * 1.15, halfHeight - inset * 0.7],
+      [-halfWidth + inset * 0.35, gap * 0.95],
+      [-halfWidth + inset * 0.8, gap * 0.3]
+    ],
+    [
+      [gap * 0.2, gap * 0.05],
+      [halfWidth - inset * 0.7, -gap * 0.35],
+      [halfWidth - inset * 1.1, halfHeight - inset * 1.05],
+      [-gap * 0.15, halfHeight - inset * 0.85],
+      [gap * 0.2, gap * 0.05]
+    ]
+  ];
+
+  const zoneFeatures = scene.zones.map((zone, index) => ({
+    type: "Feature",
+    properties: {
+      id: zone.id,
+      fill: zone.fill,
+      stroke: zone.stroke
+    },
+    geometry: {
+      type: "Polygon",
+      coordinates: [localRingToCoordinates(plot.center, zoneLocals[index], bearing)]
+    }
+  }));
+
+  const gridFeatures = [
+    {
+      type: "Feature",
+      properties: { axis: "vertical" },
+      geometry: {
+        type: "LineString",
+        coordinates: localRingToCoordinates(plot.center, [[0, -halfHeight + inset], [0, halfHeight - inset]], bearing)
+      }
+    },
+    {
+      type: "Feature",
+      properties: { axis: "horizontal" },
+      geometry: {
+        type: "LineString",
+        coordinates: localRingToCoordinates(plot.center, [[-halfWidth + inset, 0], [halfWidth - inset, 0]], bearing)
+      }
+    }
+  ];
+
+  const hotspotX = ((scene.hotspot.x - 50) / 50) * widthMeters * 0.34;
+  const hotspotY = ((scene.hotspot.y - 50) / 50) * heightMeters * 0.34;
+  const [hotspotRotatedX, hotspotRotatedY] = rotateOffsets(hotspotX, hotspotY, bearing);
+
+  return {
+    bearing,
+    outline: {
+      type: "Polygon",
+      coordinates: [localRingToCoordinates(plot.center, outlineLocal, bearing)]
+    },
+    zones: zoneFeatures,
+    grid: gridFeatures,
+    hotspot: {
+      type: "Feature",
+      properties: {
+        label: scene.hotspot.label
+      },
+      geometry: {
+        type: "Point",
+        coordinates: metersToCoordinates(plot.center, hotspotRotatedX, hotspotRotatedY)
+      }
+    }
+  };
+}
+
+function renderDetailedMapFallback(plot, scene, layers) {
   const [z1, z2, z3, z4] = scene.zones;
   const zoneOpacity = layers.ndvi ? 0.96 : 0.28;
   const rgbOverlay = layers.rgb
@@ -2535,23 +2908,6 @@ function renderDetailedMap(plot, scene, layers) {
       <path d="M136 362 L450 326 L420 512 L210 534 L92 430 Z" fill="${z3.fill}" fill-opacity="${zoneOpacity}" stroke="${z3.stroke}" stroke-width="2.5"></path>
       <path d="M470 308 L838 252 L792 492 L444 522 Z" fill="${z4.fill}" fill-opacity="${zoneOpacity}" stroke="${z4.stroke}" stroke-width="2.5"></path>
       ${hotspot}
-      <g fill="rgba(255,255,255,0.72)" font-size="18" font-family="Consolas, monospace">
-        <text x="176" y="146">${z1.id}</text>
-        <text x="610" y="146">${z2.id}</text>
-        <text x="178" y="394">${z3.id}</text>
-        <text x="602" y="364">${z4.id}</text>
-      </g>
-      <g opacity="0.8">
-        <path d="M896 44 V112" stroke="#edf7f5" stroke-width="3" stroke-linecap="round"></path>
-        <path d="M896 44 L884 60 H908 Z" fill="#edf7f5"></path>
-        <text x="888" y="132" fill="#edf7f5" font-size="18" font-family="Bahnschrift, Segoe UI, sans-serif">N</text>
-      </g>
-      <g opacity="0.8">
-        <path d="M62 586 H162" stroke="#edf7f5" stroke-width="4" stroke-linecap="round"></path>
-        <path d="M62 580 V592" stroke="#edf7f5" stroke-width="3"></path>
-        <path d="M162 580 V592" stroke="#edf7f5" stroke-width="3"></path>
-        <text x="86" y="572" fill="#edf7f5" font-size="16" font-family="Consolas, monospace">200 m</text>
-      </g>
     </svg>
   `;
 }

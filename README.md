@@ -9,7 +9,7 @@ O projeto hoje funciona como um MVP local com:
 - login e cadastro de agronomo
 - carteira isolada por usuario
 - painel com talhoes do agronomo logado
-- detalhe de talhao com mapa ilustrado e historico visual
+- detalhe de talhao com mapa real, poligono georreferenciado e hotspot
 - analise individual e em lote
 - historico de alertas
 - backend local em Python com persistencia em SQLite
@@ -22,6 +22,7 @@ O projeto hoje funciona como um MVP local com:
 - `CSS`
 - `JavaScript`
 - `Python`
+- `MapLibre GL JS`
 
 ## Estrutura
 
@@ -71,9 +72,9 @@ Senha demo:
 
 ## O que ainda e mockado
 
-- imagens de satelite reais
+- geometrias reais dos talhoes
 - NDVI real por poligono
-- mapa geoespacial real
+- imagens de satelite reais
 - clima real por API externa
 - envio real de WhatsApp
 - banco relacional de producao
@@ -81,7 +82,7 @@ Senha demo:
 ## Proximos passos
 
 1. mover sessoes de memoria para persistencia mais robusta
-2. adicionar mapa real com geometria de talhao
+2. integrar geometria real de talhao vinda de cadastro ou GeoJSON
 3. integrar imagens de satelite e NDVI real
 4. conectar clima real
 5. integrar envio de alerta por WhatsApp
