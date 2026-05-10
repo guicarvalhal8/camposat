@@ -1,7 +1,7 @@
 const brand = {
   name: "CampoSat",
-  subtitle: "Sentinel-2 / NDVI Ops",
-  promise: "Monitoramento operacional de talhoes com cenas, NDVI, clima e alertas."
+  subtitle: "Acompanhamento das fazendas",
+  promise: "Veja suas areas, entenda como cada lavoura esta e receba aviso quando algo pedir atencao."
 };
 
 const defaultFilters = {
@@ -1087,34 +1087,34 @@ function renderSidebar(route) {
         {
           href: "#/talhoes",
           key: "plots",
-          title: "Painel",
-          text: "Resumo, filtros e analise",
+          title: "Visao geral",
+          text: "Resumo das areas, filtros e proximos passos",
           icon: iconGrid()
         },
         {
           href: portfolioPlots.length ? `#/talhao/${(getMostCriticalPlot(portfolioPlots) || portfolioPlots[0]).id}` : "#/cadastro",
           key: "detail",
-          title: "Mapa do talhao",
-          text: "Camadas, cena e clima",
+          title: "Ver mapa",
+          text: "Abra a area que mais pede atencao",
           icon: iconMap()
         }
       ]
     },
     {
-      label: "Operacao",
+      label: "Cadastro e acoes",
       items: [
         {
           href: "#/cadastro",
           key: "form",
-          title: "Cadastro",
-          text: "Novo talhao e responsavel",
+          title: "Nova area",
+          text: "Cadastre fazenda, talhao e contato",
           icon: iconPlus()
         },
         {
           href: "#/alertas",
           key: "alerts",
-          title: "Alertas",
-          text: "Historico, filtro e envio",
+          title: "Avisos",
+          text: "Veja mensagens, urgencia e envios",
           icon: iconBell()
         }
       ]
@@ -1168,20 +1168,20 @@ function renderSidebar(route) {
 
       <div class="sidebar-status">
         <div class="sidebar-status-block">
-          <span class="eyebrow">Resumo rapido</span>
-          <h3>${portfolioPlots.length} talhoes monitorados</h3>
-          <p class="tiny sidebar-status-copy">${activeAgronomist || "Sem responsavel"} acompanha ${portfolioFarms.length} fazendas, ${portfolioPlots.length} talhoes e ${redAlerts} alertas altos.</p>
+          <span class="eyebrow">Visao rapida</span>
+          <h3>${portfolioPlots.length} areas acompanhadas</h3>
+          <p class="tiny sidebar-status-copy">${describeSidebarPortfolio(activeAgronomist, portfolioFarms.length, portfolioPlots.length, redAlerts)}</p>
         </div>
 
         <div class="sidebar-status-block">
           <div class="metric-box sidebar-userbox">
-            <span class="metric-label">Sessao ativa</span>
+            <span class="metric-label">Quem esta usando</span>
             <span class="metric-value">${activeAgronomist || "--"}</span>
             <span class="tiny">${currentUser?.email || "Sem e-mail"}</span>
           </div>
           <div class="badge-row sidebar-badges">
-            <span class="chip"><strong>${state.offlineMode ? "Modo" : "API"}</strong> ${state.offlineMode ? "offline" : "local"}</span>
-            <span class="chip"><strong>WhatsApp</strong> ${sentAlerts} enviados</span>
+            <span class="chip"><strong>${state.offlineMode ? "Dados" : "Conexao"}</strong> ${state.offlineMode ? "exemplo no navegador" : "servidor local"}</span>
+            <span class="chip"><strong>Mensagens</strong> ${sentAlerts} enviadas</span>
           </div>
         </div>
 
@@ -1205,44 +1205,44 @@ function renderTopbar(route, activePlot) {
 
   if (route.view === "form") {
     current = {
-      title: "Cadastro de talhao",
-      text: "Cadastre localizacao, area e responsavel para o talhao entrar na carteira do agronomo."
+      title: "Cadastrar nova area",
+      text: "Preencha os dados da fazenda e do talhao para essa area entrar no acompanhamento."
     };
-    modeLabel = "cadastro";
-    primaryKpiLabel = "Talhoes";
+    modeLabel = "Cadastro";
+    primaryKpiLabel = "Areas cadastradas";
     primaryKpiValue = String(getPortfolioPlots().length);
-    secondaryKpiLabel = "Ultima carga";
-    secondaryKpiValue = state.meta?.lastUpdated || "--";
+    secondaryKpiLabel = "Ultima atualizacao";
+    secondaryKpiValue = state.meta?.lastUpdated ? formatDateTime(state.meta.lastUpdated) : "--";
   } else if (route.view === "detail" && activePlot) {
     const scene = getActiveScene(activePlot);
     current = {
       title: activePlot.name,
       text: "Entenda o que a imagem mais recente mostra sobre a lavoura, o clima e o ponto que merece mais atencao."
     };
-    modeLabel = "detalhe";
-    primaryKpiLabel = "Status";
+    modeLabel = "Mapa da area";
+    primaryKpiLabel = "Como esta hoje";
     primaryKpiValue = statusLabel(scene.status);
-    secondaryKpiLabel = "Saude da lavoura";
-    secondaryKpiValue = scene.ndvi.toFixed(2);
+    secondaryKpiLabel = "Resumo";
+    secondaryKpiValue = shortHealthSummary(scene.ndvi);
   } else if (route.view === "alerts") {
     current = {
-      title: "Historico de alertas",
-      text: "Acompanhe apenas os alertas dos talhoes sob responsabilidade do agronomo selecionado."
+      title: "Avisos recentes",
+      text: "Veja os avisos das areas dessa carteira e acompanhe o que ja foi enviado."
     };
-    modeLabel = "alertas";
-    primaryKpiLabel = "Altos";
+    modeLabel = "Avisos";
+    primaryKpiLabel = "Mais urgentes";
     primaryKpiValue = String(stats.redAlerts);
-    secondaryKpiLabel = "Pendentes";
+    secondaryKpiLabel = "Aguardando envio";
     secondaryKpiValue = String(stats.pendingAlerts);
   } else {
     current = {
-      title: "Carteira do agronomo",
-      text: "Acompanhe so as fazendas e talhoes vinculados ao responsavel selecionado."
+      title: "Suas fazendas e areas",
+      text: "Aqui voce enxerga as fazendas da sua carteira, o que esta bem e o que merece olhar mais de perto."
     };
-    modeLabel = "monitoramento";
+    modeLabel = "Visao geral";
     primaryKpiLabel = "Fazendas";
     primaryKpiValue = String(stats.farmCount);
-    secondaryKpiLabel = "Talhoes ativos";
+    secondaryKpiLabel = "Areas acompanhadas";
     secondaryKpiValue = String(getPortfolioPlots().length);
   }
 
@@ -1253,10 +1253,10 @@ function renderTopbar(route, activePlot) {
         <h2>${current.title}</h2>
         <p>${current.text}</p>
         <div class="chip-row">
-          <span class="chip"><strong>Modo:</strong> ${modeLabel}</span>
-          <span class="chip"><strong>Agronomo:</strong> ${activeAgronomist || "--"}</span>
-          <span class="chip"><strong>Fonte:</strong> ${state.providers?.satellite?.name || "Integracao local"}</span>
-          <span class="chip"><strong>Atualizado:</strong> ${state.meta?.lastUpdated || "--"}</span>
+          <span class="chip"><strong>Tela:</strong> ${modeLabel}</span>
+          <span class="chip"><strong>Responsavel:</strong> ${activeAgronomist || "--"}</span>
+          <span class="chip"><strong>Dados vindos de:</strong> ${describeDataSource()}</span>
+          <span class="chip"><strong>Ultima atualizacao:</strong> ${state.meta?.lastUpdated ? formatDateTime(state.meta.lastUpdated) : "--"}</span>
         </div>
       </div>
       <div class="kpi-row">
@@ -1266,7 +1266,7 @@ function renderTopbar(route, activePlot) {
         </div>
         <div class="kpi-box">
           <span class="eyebrow">${secondaryKpiLabel}</span>
-          <span class="kpi-value mono">${secondaryKpiValue}</span>
+          <span class="kpi-value">${secondaryKpiValue}</span>
         </div>
       </div>
     </header>
@@ -1292,28 +1292,28 @@ function renderDashboardView() {
       <section class="panel">
         <div class="list-head">
           <div>
-            <span class="eyebrow">Controles da carteira</span>
-            <h3>Filtrar os talhoes do agronomo</h3>
-            <p>Use responsavel, busca, status e cultura para focar apenas nas fazendas acompanhadas.</p>
+            <span class="eyebrow">Encontrar uma area</span>
+            <h3>Busque e filtre suas areas</h3>
+            <p>Procure pelo nome da fazenda ou da area. Se quiser, filtre tambem pelo estado da lavoura ou pela cultura plantada.</p>
           </div>
-          <span class="chip"><strong>${filteredPlots.length}</strong> de ${portfolioPlots.length} talhoes visiveis</span>
+          <span class="chip"><strong>${filteredPlots.length}</strong> de ${portfolioPlots.length} areas na tela</span>
         </div>
         <div class="control-grid" style="margin-top: 22px;">
           <label class="toolbar-field">
-            <span>Buscar talhao</span>
-            <input name="plotQuery" value="${escapeHtml(state.filters.plotQuery)}" placeholder="Nome, fazenda ou municipio" />
+            <span>Buscar area</span>
+            <input name="plotQuery" value="${escapeHtml(state.filters.plotQuery)}" placeholder="Nome da area, fazenda ou cidade" />
           </label>
           <label class="toolbar-field">
-            <span>Status</span>
+            <span>Como esta a lavoura</span>
             <select name="plotStatus">
               ${renderOption("all", state.filters.plotStatus, "Todos")}
-              ${renderOption("green", state.filters.plotStatus, "Saudavel")}
-              ${renderOption("yellow", state.filters.plotStatus, "Atencao")}
-              ${renderOption("red", state.filters.plotStatus, "Critico")}
+              ${renderOption("green", state.filters.plotStatus, "Boa")}
+              ${renderOption("yellow", state.filters.plotStatus, "Pedindo atencao")}
+              ${renderOption("red", state.filters.plotStatus, "Prioridade alta")}
             </select>
           </label>
           <label class="toolbar-field">
-            <span>Cultura</span>
+            <span>O que esta plantado</span>
             <select name="plotCrop">
               ${renderOption("all", state.filters.plotCrop, "Todas")}
               ${renderOption("Soja", state.filters.plotCrop, "Soja")}
@@ -1322,9 +1322,9 @@ function renderDashboardView() {
           </label>
         </div>
         <div class="panel-actions" style="margin-top: 18px;">
-          <button class="button" type="button" data-action="analyze-all">Analisar filtrados</button>
-          <button class="button-secondary" type="button" data-action="reset-plot-filters">Limpar filtros</button>
-          <button class="button-secondary" type="button" data-action="reset-data">Restaurar dados</button>
+          <button class="button" type="button" data-action="analyze-all">Atualizar areas filtradas</button>
+          <button class="button-secondary" type="button" data-action="reset-plot-filters">Limpar busca e filtros</button>
+          <button class="button-secondary" type="button" data-action="reset-data">Voltar aos dados iniciais</button>
         </div>
       </section>
 
@@ -1332,8 +1332,9 @@ function renderDashboardView() {
         <section class="stats-card">
           <div class="list-head">
             <div>
-              <span class="eyebrow">Saude da operacao</span>
-              <h3>Resumo atual dos talhoes</h3>
+              <span class="eyebrow">Como esta sua carteira</span>
+              <h3>Visao geral das areas</h3>
+              <p>${describeOperationHealth(stats)}</p>
             </div>
           </div>
           <div class="gauge">
@@ -1341,40 +1342,31 @@ function renderDashboardView() {
           </div>
           <div class="status-board">
             <div class="status-cell">
-              <small>Saudaveis</small>
+              <small>Areas em boa fase</small>
               <span class="status-number">${stats.greenCount}</span>
             </div>
             <div class="status-cell">
-              <small>Atencao</small>
+              <small>Areas pedindo atencao</small>
               <span class="status-number">${stats.yellowCount}</span>
             </div>
             <div class="status-cell">
-              <small>Criticos</small>
+              <small>Areas de prioridade alta</small>
               <span class="status-number">${stats.redCount}</span>
             </div>
           </div>
           <div class="metric-row">
-            <div class="metric-box">
-              <span class="metric-label">NDVI medio</span>
-              <span class="metric-value">${stats.averageNdvi.toFixed(2)}</span>
-            </div>
-            <div class="metric-box">
-              <span class="metric-label">Alertas enviados</span>
-              <span class="metric-value">${stats.sentAlerts}</span>
-            </div>
-            <div class="metric-box">
-              <span class="metric-label">Alertas pendentes</span>
-              <span class="metric-value">${stats.pendingAlerts}</span>
-            </div>
+            ${renderExplainMetric("Nota media de saude", stats.averageNdvi.toFixed(2), "Quanto mais perto de 1, melhor tende a estar o vigor da lavoura nas imagens recentes.")}
+            ${renderExplainMetric("Mensagens ja enviadas", String(stats.sentAlerts), "Mostra quantos avisos ja foram disparados para a equipe ou responsavel.")}
+            ${renderExplainMetric("Mensagens aguardando envio", String(stats.pendingAlerts), "Sao avisos que ja apareceram no sistema, mas ainda nao foram enviados.")}
           </div>
         </section>
 
         <section class="panel">
           <div class="list-head">
             <div>
-              <span class="eyebrow">Prioridade atual</span>
-              <h3>${focusPlot ? focusPlot.name : "Nenhum talhao"}</h3>
-              <p>${focusPlot ? getLatestSnapshot(focusPlot).issue : "Nao ha talhoes cadastrados."}</p>
+              <span class="eyebrow">O que mais pede atencao</span>
+              <h3>${focusPlot ? focusPlot.name : "Nenhuma area"}</h3>
+              <p>${focusPlot ? humanizeIssue(getLatestSnapshot(focusPlot).issue, getLatestSnapshot(focusPlot)) : "Ainda nao existe nenhuma area cadastrada."}</p>
             </div>
             ${focusPlot ? renderStatusPill(getLatestSnapshot(focusPlot).status) : ""}
           </div>
@@ -1386,9 +1378,9 @@ function renderDashboardView() {
         <section class="panel">
           <div class="panel-header">
             <div>
-              <span class="eyebrow">Mercado</span>
-              <h3>Precos de referencia</h3>
-              <p>Consulte os valores mais recentes de soja e milho para apoiar a leitura operacional.</p>
+              <span class="eyebrow">Precos do dia</span>
+              <h3>Referencia para soja e milho</h3>
+              <p>Esses valores ajudam a dar contexto comercial, mas a saude da lavoura continua vindo da imagem e do clima.</p>
             </div>
           </div>
           <div class="commodity-grid" style="margin-top: 18px;">
@@ -1399,11 +1391,11 @@ function renderDashboardView() {
         <section class="panel">
           <div class="panel-header">
             <div>
-              <span class="eyebrow">Ultimos alertas</span>
-              <h3>Fila recente</h3>
-              <p>Resumo rapido das ultimas ocorrencias dos talhoes dessa carteira.</p>
+              <span class="eyebrow">Avisos mais recentes</span>
+              <h3>O que aconteceu por ultimo</h3>
+              <p>Aqui ficam os avisos que mais recentemente chamaram atencao nas areas dessa carteira.</p>
             </div>
-            <a class="button-secondary" href="#/alertas">Abrir historico</a>
+            <a class="button-secondary" href="#/alertas">Ver todos os avisos</a>
           </div>
           <div class="history-list" style="margin-top: 18px;">
             ${portfolioAlerts.length ? portfolioAlerts.slice(0, 4).map(renderAlertSummaryCard).join("") : renderEmptyState("Sem alertas nessa carteira", "Os talhoes do agronomo selecionado ainda nao geraram alertas relevantes.")}
@@ -1414,11 +1406,11 @@ function renderDashboardView() {
       <section class="panel">
         <div class="list-head">
           <div>
-            <span class="eyebrow">Talhoes monitorados</span>
-            <h3>Lista operacional</h3>
-            <p>Cards com leitura mais recente, clima resumido e acesso para mapa detalhado da carteira ativa.</p>
+            <span class="eyebrow">Areas acompanhadas</span>
+            <h3>Resumo de cada area</h3>
+            <p>Cada card mostra como a area esta hoje, o clima da leitura mais recente e o que vale olhar com mais cuidado.</p>
           </div>
-          <a class="button-secondary" href="#/cadastro">Cadastrar talhao</a>
+          <a class="button-secondary" href="#/cadastro">Adicionar nova area</a>
         </div>
         <div class="plot-grid" style="margin-top: 22px;">
           ${filteredPlots.length ? filteredPlots.map(renderPlotCard).join("") : renderEmptyState("Nenhum talhao encontrado", "Ajuste os filtros ou cadastre um novo talhao para continuar.")}
@@ -1436,24 +1428,16 @@ function renderFocusPanel(plot) {
         ${renderHeatmapPreview(scene)}
       </div>
       <div class="plot-summary">
-        <div class="metric-box">
-          <span class="metric-label">Area afetada</span>
-          <span class="metric-value">${scene.affectedAreaHa} ha</span>
-        </div>
-        <div class="metric-box">
-          <span class="metric-label">Nuvem</span>
-          <span class="metric-value">${scene.cloudCoverage}%</span>
-        </div>
-        <div class="metric-box">
-          <span class="metric-label">Data da cena</span>
-          <span class="metric-value">${scene.capturedAt}</span>
-        </div>
+        ${renderExplainMetric("Area para olhar de perto", `${scene.affectedAreaHa} ha`, describeRiskArea(scene.affectedAreaHa))}
+        ${renderExplainMetric("Nuvens na imagem", `${scene.cloudCoverage}%`, describeCloudCoverage(scene.cloudCoverage))}
+        ${renderExplainMetric("Data da ultima imagem", formatDateTime(scene.capturedAt), "Essa foi a imagem mais recente usada para resumir a situacao da area.")}
         <div class="sparkline">
           ${renderSparkline(plot.snapshots.map((item) => item.ndvi), scene.status, plot.id)}
         </div>
+        <p class="metric-copy">A linha ajuda a ver se a area vem melhorando, piorando ou ficando parecida nas ultimas imagens.</p>
         <div class="card-actions">
           <a class="button-secondary" href="#/talhao/${plot.id}">Abrir mapa</a>
-          <button class="analyze-button" type="button" data-action="analyze" data-id="${plot.id}">Atualizar leitura</button>
+          <button class="analyze-button" type="button" data-action="analyze" data-id="${plot.id}">Buscar imagem mais nova</button>
         </div>
       </div>
     </div>
@@ -1487,15 +1471,15 @@ function renderPlotCard(plot) {
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #67f1c9, #7ed9ff);"></span>
               <div class="micro-copy">
-                <strong>Cena mais recente</strong>
-                <p>${scene.capturedAt}</p>
+                <strong>Ultima imagem usada</strong>
+                <p>${formatDateTime(scene.capturedAt)}</p>
               </div>
-              <div class="micro-time">${scene.cloudCoverage}% nuvem</div>
+              <div class="micro-time">${scene.cloudCoverage}% de nuvens</div>
             </div>
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #ffb55c, #ffe07a);"></span>
               <div class="micro-copy">
-                <strong>Hotspot principal</strong>
+                <strong>Ponto que mais preocupa</strong>
                 <p>${scene.hotspot.label}</p>
               </div>
               <div class="micro-time">${scene.affectedAreaHa} ha</div>
@@ -1503,7 +1487,7 @@ function renderPlotCard(plot) {
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #ff6b6b, #ff9865);"></span>
               <div class="micro-copy">
-                <strong>Responsavel</strong>
+                <strong>Quem cuida dessa area</strong>
                 <p>${plot.agronomist}</p>
               </div>
               <div class="micro-time">${plot.crop}</div>
@@ -1511,28 +1495,19 @@ function renderPlotCard(plot) {
           </div>
         </div>
         <div class="plot-summary">
-          <div class="metric-box">
-            <span class="metric-label">NDVI atual</span>
-            <span class="metric-value">${scene.ndvi.toFixed(2)}</span>
-          </div>
-          <div class="metric-box">
-            <span class="metric-label">Area em risco</span>
-            <span class="metric-value">${scene.affectedAreaHa} ha</span>
-          </div>
-          <div class="metric-box">
-            <span class="metric-label">Clima</span>
-            <span class="metric-value">${scene.weather.tempC}C / ${scene.weather.rainMm}mm</span>
-          </div>
+          ${renderExplainMetric("Como a lavoura esta hoje", scene.ndvi.toFixed(2), describeHealthIndex(scene.ndvi))}
+          ${renderExplainMetric("Area para olhar de perto", `${scene.affectedAreaHa} ha`, describeRiskArea(scene.affectedAreaHa))}
+          ${renderExplainMetric("Clima da ultima imagem", `${scene.weather.tempC}C / ${scene.weather.rainMm}mm`, `${describeTemperature(scene.weather.tempC)} ${describeRain(scene.weather.rainMm)}`)}
           <div class="sparkline">
             ${renderSparkline(plot.snapshots.map((item) => item.ndvi), scene.status, plot.id)}
           </div>
-          <p class="tiny">${scene.issue}</p>
+          <p class="tiny">${humanizeIssue(scene.issue, scene)}</p>
         </div>
       </div>
 
       <div class="card-actions">
         <a class="button-secondary" href="#/talhao/${plot.id}">Abrir mapa</a>
-        <button class="analyze-button" type="button" data-action="analyze" data-id="${plot.id}">Analisar agora</button>
+        <button class="analyze-button" type="button" data-action="analyze" data-id="${plot.id}">Buscar imagem mais nova</button>
       </div>
     </article>
   `;
@@ -1605,7 +1580,7 @@ function renderDetailView(plot) {
           </div>
           <div class="hotspot-label">
             <strong>Ponto de atencao: ${scene.hotspot.label}</strong>
-            <span class="tiny">${scene.issue}</span>
+            <span class="tiny">${humanizeIssue(scene.issue, scene)}</span>
           </div>
         </div>
 
@@ -1621,7 +1596,7 @@ function renderDetailView(plot) {
               ${renderExplainMetric("Imagem anterior", previousScene ? formatDateTime(previousScene.capturedAt) : "Primeira leitura", previousScene ? "Serve para comparar se a area melhorou ou piorou." : "Ainda nao existe comparacao anterior para este talhao.")}
               ${renderExplainMetric("Nuvens na imagem", `${scene.cloudCoverage}%`, describeCloudCoverage(scene.cloudCoverage))}
             </div>
-            <p class="metric-copy" style="margin-top: 18px;">${scene.issue}</p>
+            <p class="metric-copy" style="margin-top: 18px;">${humanizeIssue(scene.issue, scene)}</p>
           </section>
 
           <section class="panel">
@@ -1641,7 +1616,7 @@ function renderDetailView(plot) {
       <div class="detail-column">
         <section class="panel">
           <span class="eyebrow">Clima da ultima leitura</span>
-          <h3>Condições do talhao</h3>
+          <h3>Como estava o tempo na area</h3>
           <div class="weather-grid" style="margin-top: 18px;">
             ${renderExplainMetric("Temperatura", `${scene.weather.tempC}C`, describeTemperature(scene.weather.tempC))}
             ${renderExplainMetric("Chuva recente", `${scene.weather.rainMm} mm`, describeRain(scene.weather.rainMm))}
@@ -1651,20 +1626,20 @@ function renderDetailView(plot) {
         </section>
 
         <section class="panel">
-          <span class="eyebrow">Mercado</span>
-          <h3>Preco de referencia</h3>
+          <span class="eyebrow">Precos do dia</span>
+          <h3>Referencia de mercado</h3>
           <div class="commodity-grid" style="margin-top: 18px;">
             ${renderMarketCards()}
           </div>
         </section>
 
         <section class="panel">
-          <span class="eyebrow">Acao recomendada</span>
-          <h3>O que fazer agora</h3>
+          <span class="eyebrow">Proximo passo</span>
+          <h3>O que vale fazer agora</h3>
           <div class="big-number">${scene.affectedAreaHa} ha</div>
           <p class="metric-copy">${buildActionSummary(plot, scene)}</p>
           <div class="panel-actions" style="margin-top: 18px;">
-            <button class="button" type="button" data-action="analyze" data-id="${plot.id}">Atualizar leitura</button>
+            <button class="button" type="button" data-action="analyze" data-id="${plot.id}">Buscar imagem mais nova</button>
           </div>
         </section>
 
@@ -1704,19 +1679,19 @@ function renderAlertsView() {
       <section class="panel">
         <div class="list-head">
           <div>
-            <span class="eyebrow">Consulta da carteira</span>
-            <h3>Filtrar alertas do agronomo</h3>
-            <p>Busque por talhao ou resumo e refine por severidade para localizar disparos apenas da sua base.</p>
+            <span class="eyebrow">Encontrar um aviso</span>
+            <h3>Busque os avisos da sua carteira</h3>
+            <p>Procure pelo nome da area, pelo resumo do problema ou filtre pelo nivel de urgencia.</p>
           </div>
-          <span class="chip"><strong>${filteredAlerts.length}</strong> de ${portfolioAlerts.length} alertas visiveis</span>
+          <span class="chip"><strong>${filteredAlerts.length}</strong> de ${portfolioAlerts.length} avisos na tela</span>
         </div>
         <div class="control-grid" style="margin-top: 22px;">
           <label class="toolbar-field">
-            <span>Buscar alerta</span>
-            <input name="alertQuery" value="${escapeHtml(state.filters.alertQuery)}" placeholder="Talhao, resumo ou data" />
+            <span>Buscar aviso</span>
+            <input name="alertQuery" value="${escapeHtml(state.filters.alertQuery)}" placeholder="Area, resumo ou data" />
           </label>
           <label class="toolbar-field">
-            <span>Severidade</span>
+            <span>Nivel de urgencia</span>
             <select name="alertSeverity">
               ${renderOption("all", state.filters.alertSeverity, "Todas")}
               ${renderOption("Alta", state.filters.alertSeverity, "Alta")}
@@ -1724,10 +1699,7 @@ function renderAlertsView() {
               ${renderOption("Baixa", state.filters.alertSeverity, "Baixa")}
             </select>
           </label>
-          <div class="metric-box">
-            <span class="metric-label">Resumo</span>
-            <span class="metric-value">${stats.redAlerts} altos / ${stats.sentAlerts} enviados</span>
-          </div>
+          ${renderExplainMetric("Resumo rapido", `${stats.redAlerts} urgentes / ${stats.sentAlerts} enviados`, "Esse numero junta os avisos mais serios e quantos deles ja viraram mensagem.")}
         </div>
         <div class="panel-actions" style="margin-top: 18px;">
           <button class="button-secondary" type="button" data-action="reset-alert-filters">Limpar filtros</button>
@@ -1738,18 +1710,18 @@ function renderAlertsView() {
       <section class="panel">
         <div class="panel-header">
           <div>
-            <span class="eyebrow">Timeline operacional</span>
-            <h3>Alertas consolidados</h3>
-            <p>Severidade, horario, talhao e status de notificacao no mesmo lugar.</p>
+            <span class="eyebrow">Lista de avisos</span>
+            <h3>Todos os avisos no mesmo lugar</h3>
+            <p>Aqui voce ve quando aconteceu, em qual area e se a mensagem ja foi enviada.</p>
           </div>
         </div>
         <div class="table-list" style="margin-top: 20px;">
           <div class="table-row header">
-            <div>ID</div>
-            <div>Talhao</div>
-            <div>Resumo</div>
-            <div>Severidade</div>
-            <div>WhatsApp</div>
+            <div>Codigo</div>
+            <div>Area</div>
+            <div>O que aconteceu</div>
+            <div>Urgencia</div>
+            <div>Mensagem</div>
           </div>
           ${filteredAlerts.length ? filteredAlerts.map(renderAlertRow).join("") : renderEmptyState("Nenhum alerta encontrado", "Ajuste a busca ou a severidade para ampliar os resultados.")}
         </div>
@@ -1868,12 +1840,14 @@ function renderMarketCards() {
       <span class="metric-label">${state.market.soy.label}</span>
       <span class="metric-value">${formatCurrency(state.market.soy.price)}</span>
       <span class="metric-delta ${state.market.soy.change >= 0 ? "up" : "down"}">${formatSigned(state.market.soy.change)}</span>
+      <p class="metric-help">${describeMarketMove(state.market.soy.change)}</p>
       <span class="tiny market-source">Fonte: ${state.market.soy.source}</span>
     </div>
     <div class="metric-box">
       <span class="metric-label">${state.market.corn.label}</span>
       <span class="metric-value">${formatCurrency(state.market.corn.price)}</span>
       <span class="metric-delta ${state.market.corn.change >= 0 ? "up" : "down"}">${formatSigned(state.market.corn.change)}</span>
+      <p class="metric-help">${describeMarketMove(state.market.corn.change)}</p>
       <span class="tiny market-source">Fonte: ${state.market.corn.source}</span>
     </div>
   `;
@@ -1885,9 +1859,9 @@ function renderAlertSummaryCard(alert) {
       <span class="alert-swatch" style="background: ${severityGradient(alert.severity)};"></span>
       <div class="history-copy">
         <strong>${alert.plotName}</strong>
-        <p>${alert.summary}</p>
+        <p>${humanizeAlertSummary(alert.summary, alert)}</p>
       </div>
-      <div class="history-meta">${alert.when}<br />${alert.sent ? "Enviado" : "Pendente"}</div>
+      <div class="history-meta">${formatDateTime(alert.when)}<br />${alert.sent ? "Mensagem enviada" : "Aguardando envio"}</div>
     </div>
   `;
 }
@@ -1915,11 +1889,11 @@ function renderAlertRow(alert) {
       <div class="mono">${alert.id}</div>
       <div>
         <strong>${alert.plotName}</strong>
-        <p class="tiny">${alert.when}</p>
+        <p class="tiny">${formatDateTime(alert.when)}</p>
       </div>
-      <div>${alert.summary}</div>
-      <div><span class="severity-pill ${severityClass(alert.severity)}">${alert.severity}</span></div>
-      <div class="${alert.sent ? "success-pill" : ""}">${alert.sent ? "Enviado" : "Pendente"}</div>
+      <div>${humanizeAlertSummary(alert.summary, alert)}</div>
+      <div><span class="severity-pill ${severityClass(alert.severity)}">${severityLabel(alert.severity)}</span></div>
+      <div class="${alert.sent ? "success-pill" : ""}">${alert.sent ? "Ja enviada" : "Ainda nao enviada"}</div>
     </div>
   `;
 }
@@ -1929,10 +1903,10 @@ function renderPlotAlert(alert) {
     <div class="history-item">
       <span class="alert-swatch" style="background: ${severityGradient(alert.severity)};"></span>
       <div class="history-copy">
-        <strong>${alert.severity}</strong>
-        <p>${alert.summary}</p>
+        <strong>${severityLabel(alert.severity)}</strong>
+        <p>${humanizeAlertSummary(alert.summary, alert)}</p>
       </div>
-      <div class="history-meta">${alert.when}<br />${alert.sent ? "WhatsApp enviado" : "Somente log"}</div>
+      <div class="history-meta">${formatDateTime(alert.when)}<br />${alert.sent ? "Mensagem enviada" : "So registrado no sistema"}</div>
     </div>
   `;
 }
@@ -2979,9 +2953,9 @@ function renderToast() {
 }
 
 function statusLabel(status) {
-  if (status === "green") return "Saudavel";
-  if (status === "yellow") return "Atencao";
-  return "Critico";
+  if (status === "green") return "Boa";
+  if (status === "yellow") return "Pedindo atencao";
+  return "Prioridade alta";
 }
 
 function statusClass(status) {
@@ -3002,6 +2976,12 @@ function severityClass(severity) {
   return "severity-high";
 }
 
+function severityLabel(severity) {
+  if (severity === "Baixa") return "Baixa";
+  if (severity === "Media") return "Media";
+  return "Alta";
+}
+
 function severityGradient(severity) {
   if (severity === "Baixa") return "linear-gradient(180deg, #67f1c9, #7ed9ff)";
   if (severity === "Media") return "linear-gradient(180deg, #ffb55c, #ffe07a)";
@@ -3018,6 +2998,97 @@ function formatCurrency(value) {
 
 function formatSigned(value) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function describeSidebarPortfolio(activeAgronomist, farmCount, plotCount, redAlerts) {
+  if (!activeAgronomist) {
+    return "Entre com seu perfil para ver somente as fazendas e areas sob sua responsabilidade.";
+  }
+  if (!plotCount) {
+    return `${activeAgronomist} ainda nao tem areas cadastradas nesta carteira.`;
+  }
+  return `${activeAgronomist} acompanha ${farmCount} fazendas e ${plotCount} areas. Hoje existem ${redAlerts} avisos urgentes.`;
+}
+
+function describeDataSource() {
+  if (state.offlineMode) return "dados de exemplo salvos no navegador";
+  return "servidor local do aplicativo";
+}
+
+function shortHealthSummary(value) {
+  if (value >= 0.75) return "boa";
+  if (value >= 0.6) return "estavel";
+  if (value >= 0.5) return "pedindo cuidado";
+  return "preocupante";
+}
+
+function humanizeIssue(text, scene = null) {
+  const raw = String(text || "").trim();
+  if (!raw) return "Sem observacoes importantes nesta leitura.";
+  const normalized = normalizeText(raw);
+  if (normalized.includes("indice alto") || normalized.includes("boa resposta vegetativa") || normalized.includes("cobertura fechando") || normalized.includes("vigor consistente")) {
+    return "A imagem mostra a lavoura em boa situacao, sem sinal importante de problema.";
+  }
+  if (normalized.includes("recuperacao") || normalized.includes("crescimento")) {
+    return "A area vinha melhorando na ultima comparacao.";
+  }
+  if (normalized.includes("perda localizada") || normalized.includes("setor sudoeste")) {
+    return "Existe um ponto especifico perdendo forca e valendo visita em campo.";
+  }
+  if (normalized.includes("reboleira amarela") || normalized.includes("estresse") || normalized.includes("piorou")) {
+    return scene
+      ? `A imagem indica enfraquecimento em parte da area e cerca de ${scene.affectedAreaHa} ha merecem olhar mais de perto.`
+      : "A imagem indica enfraquecimento em parte da area e pede vistoria.";
+  }
+  if (normalized.includes("anomalia")) {
+    return scene
+      ? `Foi encontrado um problema concentrado em aproximadamente ${scene.affectedAreaHa} ha.`
+      : "Foi encontrado um problema concentrado em parte da area.";
+  }
+  return raw;
+}
+
+function describeOperationHealth(stats) {
+  if (!stats.farmCount) {
+    return "Ainda nao existem fazendas nessa carteira.";
+  }
+  if (stats.redCount > 0) {
+    return `Hoje ha ${stats.redCount} areas com prioridade alta e ${stats.yellowCount} que pedem acompanhamento mais de perto.`;
+  }
+  if (stats.yellowCount > 0) {
+    return `A maior parte das areas esta bem, mas ${stats.yellowCount} ainda pedem acompanhamento.`;
+  }
+  return "No momento as areas da carteira aparecem em boa situacao nas leituras mais recentes.";
+}
+
+function describeMarketMove(change) {
+  if (change >= 1) return "Subiu em relacao a referencia anterior.";
+  if (change > 0) return "Teve leve alta em relacao a referencia anterior.";
+  if (change === 0) return "Ficou no mesmo nivel da referencia anterior.";
+  if (change <= -1) return "Caiu em relacao a referencia anterior.";
+  return "Teve leve queda em relacao a referencia anterior.";
+}
+
+function humanizeAlertSummary(text, alert = null) {
+  const raw = String(text || "").trim();
+  if (!raw) return "Sem detalhes adicionais para este aviso.";
+  const normalized = normalizeText(raw);
+  const areaMatch = raw.match(/(\d+)\s*ha/i);
+  const area = areaMatch ? areaMatch[1] : null;
+  if (normalized.includes("queda adicional")) {
+    return area
+      ? `A piora continuou e cerca de ${area} ha precisam de verificacao rapida.`
+      : "A piora continuou e vale verificar essa area rapidamente.";
+  }
+  if (normalized.includes("anomalia persistente")) {
+    return area
+      ? `O problema segue aparecendo e atinge por volta de ${area} ha.`
+      : "O problema segue aparecendo na mesma area.";
+  }
+  if (normalized.includes("variacao leve")) {
+    return "Foi vista uma mudanca leve, mas ainda sem gravidade alta.";
+  }
+  return alert?.severity === "Alta" ? "Esse aviso pede prioridade de acompanhamento." : raw;
 }
 
 function renderExplainMetric(label, value, description) {
