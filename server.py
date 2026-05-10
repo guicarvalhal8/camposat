@@ -162,6 +162,7 @@ def init_db():
                 agronomist TEXT NOT NULL,
                 whatsapp TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
+                geometry_json TEXT,
                 snapshots_json TEXT NOT NULL,
                 alerts_json TEXT NOT NULL,
                 FOREIGN KEY(owner_user_id) REFERENCES users(id),
@@ -182,6 +183,7 @@ def init_db():
             """
         )
         ensure_plot_farm_column(connection)
+        ensure_plot_geometry_column(connection)
         backfill_farms(connection)
 
         user_count = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -194,6 +196,13 @@ def ensure_plot_farm_column(connection):
     columns = {row["name"] for row in connection.execute("PRAGMA table_info(plots)").fetchall()}
     if "farm_id" not in columns:
         connection.execute("ALTER TABLE plots ADD COLUMN farm_id TEXT")
+        connection.commit()
+
+
+def ensure_plot_geometry_column(connection):
+    columns = {row["name"] for row in connection.execute("PRAGMA table_info(plots)").fetchall()}
+    if "geometry_json" not in columns:
+        connection.execute("ALTER TABLE plots ADD COLUMN geometry_json TEXT")
         connection.commit()
 
 
@@ -268,10 +277,10 @@ def seed_database(connection):
             """
             INSERT INTO plots(
                 id, owner_user_id, farm_id, name, farm_name, crop, hectares, municipality,
-                center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
+                center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes, geometry_json,
                 snapshots_json, alerts_json
             )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plot["id"],
@@ -288,6 +297,7 @@ def seed_database(connection):
                 plot["agronomist"],
                 plot.get("whatsapp", ""),
                 plot.get("notes", ""),
+                json.dumps(plot.get("geometry"), ensure_ascii=False) if plot.get("geometry") else None,
                 json.dumps(plot["snapshots"], ensure_ascii=False),
                 json.dumps(plot.get("alerts", []), ensure_ascii=False),
             ),
@@ -388,6 +398,7 @@ def row_to_plot(row):
         "municipality": row["municipality"],
         "center": {"lat": row["center_lat"], "lon": row["center_lon"]},
         "coordinatesText": row["coordinates_text"],
+        "geometry": json.loads(row["geometry_json"]) if row["geometry_json"] else None,
         "agronomist": row["agronomist"],
         "whatsapp": row["whatsapp"],
         "notes": row["notes"],
@@ -567,7 +578,7 @@ def save_plot(connection, plot):
         UPDATE plots
         SET owner_user_id = ?, farm_id = ?, name = ?, farm_name = ?, crop = ?, hectares = ?, municipality = ?,
             center_lat = ?, center_lon = ?, coordinates_text = ?, agronomist = ?, whatsapp = ?, notes = ?,
-            snapshots_json = ?, alerts_json = ?
+            geometry_json = ?, snapshots_json = ?, alerts_json = ?
         WHERE id = ?
         """,
         (
@@ -584,6 +595,7 @@ def save_plot(connection, plot):
             plot["agronomist"],
             plot.get("whatsapp", ""),
             plot.get("notes", ""),
+            json.dumps(plot.get("geometry"), ensure_ascii=False) if plot.get("geometry") else None,
             json.dumps(plot["snapshots"], ensure_ascii=False),
             json.dumps(plot.get("alerts", []), ensure_ascii=False),
             plot["id"],
@@ -760,10 +772,17 @@ def append_alert_if_needed(connection, plot, snapshot):
 def create_plot(connection, payload, user):
     plot_id = next_plot_id(connection)
     crop = payload.get("crop", "Soja")
+    geometry = normalize_polygon_geometry(payload.get("geometry"))
+    lat_value = payload.get("lat")
+    lon_value = payload.get("lon")
     center = {
-        "lat": float(payload.get("lat", 0)),
-        "lon": float(payload.get("lon", 0)),
+        "lat": float(lat_value) if lat_value not in (None, "") else 0.0,
+        "lon": float(lon_value) if lon_value not in (None, "") else 0.0,
     }
+    if geometry:
+        centroid = centroid_from_geometry(geometry)
+        if centroid:
+            center = centroid
     base_ndvi = 0.72 if crop == "Soja" else 0.68
     initial_weather = REGISTRY.weather.generate({"crop": crop}, "green", base_ndvi)
     farm_name = payload.get("farmName", user.get("farmName", "Novo cadastro")).strip() or user.get("farmName", "Novo cadastro")
@@ -788,6 +807,7 @@ def create_plot(connection, payload, user):
         "municipality": municipality,
         "center": center,
         "coordinatesText": f"{center['lat']:.4f}, {center['lon']:.4f}",
+        "geometry": geometry,
         "agronomist": user["name"],
         "whatsapp": whatsapp,
         "notes": payload.get("notes", "").strip(),
@@ -821,10 +841,10 @@ def create_plot(connection, payload, user):
         """
         INSERT INTO plots(
             id, owner_user_id, farm_id, name, farm_name, crop, hectares, municipality,
-            center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
+            center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes, geometry_json,
             snapshots_json, alerts_json
         )
-        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             plot["id"],
@@ -841,6 +861,7 @@ def create_plot(connection, payload, user):
             plot["agronomist"],
             plot["whatsapp"],
             plot["notes"],
+            json.dumps(plot["geometry"], ensure_ascii=False) if plot.get("geometry") else None,
             json.dumps(plot["snapshots"], ensure_ascii=False),
             json.dumps(plot["alerts"], ensure_ascii=False),
         ),
@@ -876,6 +897,51 @@ def build_session_cookie(session_id):
 
 def build_clear_session_cookie():
     return f"{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+
+
+def _close_ring(ring):
+    if not ring:
+        return []
+    normalized = [[float(pair[0]), float(pair[1])] for pair in ring]
+    if normalized[0] != normalized[-1]:
+        normalized.append(normalized[0])
+    return normalized
+
+
+def normalize_polygon_geometry(value):
+    if not isinstance(value, dict):
+        return None
+    if value.get("type") == "Polygon":
+        coordinates = value.get("coordinates") or []
+        if not coordinates or not isinstance(coordinates[0], list):
+            return None
+        outer_candidate = coordinates[0]
+        if outer_candidate and isinstance(outer_candidate[0], (int, float)):
+            outer_candidate = coordinates
+        ring = [pair for pair in outer_candidate if isinstance(pair, (list, tuple)) and len(pair) >= 2]
+        if len(ring) < 3:
+            return None
+        return {"type": "Polygon", "coordinates": [_close_ring(ring)]}
+    if value.get("type") == "Feature":
+        return normalize_polygon_geometry(value.get("geometry"))
+    if value.get("type") == "FeatureCollection":
+        for feature in value.get("features") or []:
+            geometry = normalize_polygon_geometry(feature)
+            if geometry:
+                return geometry
+    return None
+
+
+def centroid_from_geometry(geometry):
+    ring = ((geometry or {}).get("coordinates") or [[]])[0]
+    if not ring:
+        return None
+    unique = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else ring
+    if not unique:
+        return None
+    lat = sum(float(pair[1]) for pair in unique) / len(unique)
+    lon = sum(float(pair[0]) for pair in unique) / len(unique)
+    return {"lat": lat, "lon": lon}
 
 
 class CampoSatHandler(SimpleHTTPRequestHandler):

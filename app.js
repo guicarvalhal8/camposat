@@ -45,11 +45,21 @@ const state = {
     mode: "login",
     error: null
   },
+  form: {
+    draft: null,
+    geometryMode: "auto",
+    points: [],
+    importText: "",
+    mapCenter: { lat: -15.8, lon: -47.9 },
+    mapZoom: 4.4,
+    error: null
+  },
   toast: null
 };
 
 let memoryOfflineState = null;
 let detailMap = null;
+let formMap = null;
 
 const app = document.getElementById("app");
 
@@ -58,6 +68,7 @@ document.addEventListener("click", (event) => {
   void handleClick(event);
 });
 document.addEventListener("change", handleChange);
+document.addEventListener("input", handleInput);
 document.addEventListener("submit", (event) => {
   void handleSubmit(event);
 });
@@ -277,6 +288,7 @@ function buildOfflinePlot(config) {
     municipality: config.municipality,
     center: config.center,
     coordinatesText: `${config.center.lat.toFixed(4)}, ${config.center.lon.toFixed(4)}`,
+    geometry: config.geometry || null,
     agronomist: config.agronomist,
     whatsapp: config.whatsapp,
     notes: config.notes,
@@ -693,7 +705,7 @@ function normalizeEmail(value) {
 }
 
 function render() {
-  teardownLiveMap();
+  teardownMaps();
   const route = getRoute();
   const portfolioPlots = getPortfolioPlots();
   const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
@@ -725,17 +737,26 @@ function render() {
     </div>
     ${renderToast()}
   `;
-  mountLiveMap(route, activePlot);
+  mountMaps(route, activePlot);
 }
 
-function teardownLiveMap() {
+function teardownMaps() {
   if (detailMap) {
     detailMap.remove();
     detailMap = null;
   }
+  if (formMap) {
+    formMap.remove();
+    formMap = null;
+  }
 }
 
-function mountLiveMap(route, activePlot) {
+function mountMaps(route, activePlot) {
+  mountDetailMap(route, activePlot);
+  mountFormMap(route);
+}
+
+function mountDetailMap(route, activePlot) {
   if (route.view !== "detail" || !activePlot) return;
   const container = document.getElementById("detail-live-map");
   if (!container || typeof window.maplibregl === "undefined") return;
@@ -909,6 +930,142 @@ function mountLiveMap(route, activePlot) {
       detailMap.getCanvas().style.cursor = "";
     });
   });
+}
+
+function mountFormMap(route) {
+  if (route.view !== "form") return;
+  const container = document.getElementById("plot-geometry-map");
+  if (!container || typeof window.maplibregl === "undefined" || state.form.geometryMode !== "draw") return;
+
+  const draft = ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  const lat = Number(draft.lat);
+  const lon = Number(draft.lon);
+  const center =
+    Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)
+      ? [lon, lat]
+      : [state.form.mapCenter.lon, state.form.mapCenter.lat];
+
+  formMap = new window.maplibregl.Map({
+    container,
+    style: buildMapStyle({ rgb: false }),
+    center,
+    zoom: state.form.mapZoom || ((Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)) ? 14.5 : 4.4),
+    attributionControl: false
+  });
+
+  formMap.addControl(new window.maplibregl.NavigationControl({ showCompass: false }), "top-right");
+  formMap.addControl(new window.maplibregl.AttributionControl({ compact: true }), "bottom-right");
+
+  formMap.on("load", () => {
+    updateFormMapLayers();
+  });
+
+  formMap.on("click", (event) => {
+    state.form.points = [
+      ...state.form.points,
+      [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]
+    ];
+    state.form.error = null;
+    const geometry = getDrawnGeometry();
+    if (geometry) {
+      syncDraftCenterFromGeometry(geometry);
+    } else {
+      state.form.mapCenter = { lat: event.lngLat.lat, lon: event.lngLat.lng };
+      state.form.mapZoom = Math.max(formMap.getZoom(), 14.5);
+    }
+    render();
+  });
+
+  formMap.on("moveend", () => {
+    if (!formMap) return;
+    const centerPoint = formMap.getCenter();
+    state.form.mapCenter = { lat: centerPoint.lat, lon: centerPoint.lng };
+    state.form.mapZoom = formMap.getZoom();
+  });
+}
+
+function updateFormMapLayers() {
+  if (!formMap || !formMap.isStyleLoaded()) return;
+  const geometry = getDrawnGeometry();
+  const points = state.form.points.map((coordinate, index) => ({
+    type: "Feature",
+    properties: { index: index + 1 },
+    geometry: {
+      type: "Point",
+      coordinates: coordinate
+    }
+  }));
+  const polygonData = {
+    type: "FeatureCollection",
+    features: geometry ? [{ type: "Feature", properties: {}, geometry }] : []
+  };
+  const pointsData = {
+    type: "FeatureCollection",
+    features: points
+  };
+  const lineData = {
+    type: "FeatureCollection",
+    features: state.form.points.length >= 2
+      ? [{
+          type: "Feature",
+          properties: {},
+          geometry: {
+            type: "LineString",
+            coordinates: state.form.points
+          }
+        }]
+      : []
+  };
+
+  if (!formMap.getSource("form-geometry-fill")) {
+    formMap.addSource("form-geometry-fill", { type: "geojson", data: polygonData });
+    formMap.addSource("form-geometry-line", { type: "geojson", data: lineData });
+    formMap.addSource("form-geometry-points", { type: "geojson", data: pointsData });
+
+    formMap.addLayer({
+      id: "form-geometry-fill-layer",
+      type: "fill",
+      source: "form-geometry-fill",
+      paint: {
+        "fill-color": "rgba(103, 241, 201, 0.28)",
+        "fill-outline-color": "#e9fff4"
+      }
+    });
+    formMap.addLayer({
+      id: "form-geometry-line-layer",
+      type: "line",
+      source: "form-geometry-line",
+      paint: {
+        "line-color": "#7ed9ff",
+        "line-width": 2.4
+      }
+    });
+    formMap.addLayer({
+      id: "form-geometry-points-layer",
+      type: "circle",
+      source: "form-geometry-points",
+      paint: {
+        "circle-radius": 5.8,
+        "circle-color": "#031219",
+        "circle-stroke-color": "#89e9ff",
+        "circle-stroke-width": 2.6
+      }
+    });
+  } else {
+    formMap.getSource("form-geometry-fill").setData(polygonData);
+    formMap.getSource("form-geometry-line").setData(lineData);
+    formMap.getSource("form-geometry-points").setData(pointsData);
+  }
+
+  if (geometry) {
+    const bounds = new window.maplibregl.LngLatBounds();
+    geometry.coordinates[0].forEach((coordinate) => bounds.extend(coordinate));
+    formMap.fitBounds(bounds, {
+      padding: 48,
+      duration: 0,
+      maxZoom: 17
+    });
+  }
 }
 
 function getRoute() {
@@ -1754,6 +1911,9 @@ function renderAlertsView() {
 function renderFormView() {
   const activeAgronomist = getActiveAgronomist();
   const currentUser = getCurrentUser();
+  const draft = ensureFormDraft(currentUser, activeAgronomist);
+  const geometry = getDraftGeometry();
+  const geometrySummary = getDraftGeometrySummary(geometry);
   return `
     <section class="form-shell">
       <div class="panel">
@@ -1761,56 +1921,108 @@ function renderFormView() {
           <div>
             <span class="eyebrow">Cadastro de talhao</span>
             <h3>Novo talhao monitorado</h3>
-            <p>Preencha a area, localizacao, cultura e responsavel para adicionar o talhao ao app.</p>
+            <p>Preencha os dados basicos e escolha como o contorno da area sera definido: desenho no mapa, importacao de arquivo ou geracao automatica.</p>
           </div>
         </div>
+
+        ${state.form.error ? `<div class="auth-error">${escapeHtml(state.form.error)}</div>` : ""}
 
         <form id="plot-form">
           <div class="field-grid">
             <div class="field-group">
               <label for="plot-name">Nome do talhao</label>
-              <input id="plot-name" name="plotName" placeholder="Ex.: Talhao Oeste 12" required />
+              <input id="plot-name" name="plotName" value="${escapeHtml(draft.plotName)}" placeholder="Ex.: Talhao Oeste 12" required />
             </div>
             <div class="field-group">
               <label for="farm-name">Fazenda</label>
-              <input id="farm-name" name="farmName" value="${escapeHtml(currentUser?.farmName || "")}" placeholder="Ex.: Fazenda Serra Azul" required />
+              <input id="farm-name" name="farmName" value="${escapeHtml(draft.farmName)}" placeholder="Ex.: Fazenda Serra Azul" required />
             </div>
             <div class="field-group">
               <label for="plot-crop">Cultura</label>
               <select id="plot-crop" name="crop">
-                <option value="Soja">Soja</option>
-                <option value="Milho">Milho</option>
+                <option value="Soja" ${draft.crop === "Soja" ? "selected" : ""}>Soja</option>
+                <option value="Milho" ${draft.crop === "Milho" ? "selected" : ""}>Milho</option>
               </select>
             </div>
             <div class="field-group">
               <label for="plot-area">Area em hectares</label>
-              <input id="plot-area" name="hectares" type="number" min="1" placeholder="85" required />
+              <input id="plot-area" name="hectares" type="number" min="1" value="${escapeHtml(draft.hectares)}" placeholder="85" required />
             </div>
             <div class="field-group">
               <label for="plot-city">Municipio</label>
-              <input id="plot-city" name="municipality" placeholder="Ex.: Rio Verde, GO" required />
+              <input id="plot-city" name="municipality" value="${escapeHtml(draft.municipality)}" placeholder="Ex.: Rio Verde, GO" required />
             </div>
             <div class="field-group">
               <label for="plot-agro">Agronomo responsavel</label>
-              <input id="plot-agro" name="agronomist" value="${escapeHtml(activeAgronomist)}" placeholder="Nome completo" readonly required />
+              <input id="plot-agro" name="agronomist" value="${escapeHtml(draft.agronomist)}" placeholder="Nome completo" readonly required />
             </div>
             <div class="field-group">
-              <label for="plot-lat">Latitude</label>
-              <input id="plot-lat" name="lat" type="number" step="0.0001" placeholder="-16.0000" required />
+              <label for="plot-lat">Latitude do centro</label>
+              <input id="plot-lat" name="lat" type="number" step="0.000001" value="${escapeHtml(draft.lat)}" placeholder="-16.0000" />
             </div>
             <div class="field-group">
-              <label for="plot-lon">Longitude</label>
-              <input id="plot-lon" name="lon" type="number" step="0.0001" placeholder="-49.0000" required />
+              <label for="plot-lon">Longitude do centro</label>
+              <input id="plot-lon" name="lon" type="number" step="0.000001" value="${escapeHtml(draft.lon)}" placeholder="-49.0000" />
             </div>
             <div class="field-group">
               <label for="plot-whatsapp">WhatsApp</label>
-              <input id="plot-whatsapp" name="whatsapp" value="${escapeHtml(currentUser?.whatsapp || "")}" placeholder="+55 62 99999-9999" required />
+              <input id="plot-whatsapp" name="whatsapp" value="${escapeHtml(draft.whatsapp)}" placeholder="+55 62 99999-9999" required />
             </div>
             <div class="field-group full">
               <label for="plot-notes">Observacoes</label>
-              <textarea id="plot-notes" name="notes" placeholder="Acesso, pivoto, observacoes de campo ou informacoes do perimetro."></textarea>
+              <textarea id="plot-notes" name="notes" placeholder="Acesso, pivoto, observacoes de campo ou informacoes do perimetro.">${escapeHtml(draft.notes)}</textarea>
             </div>
           </div>
+
+          <div class="geometry-shell">
+            <div class="list-head">
+              <div>
+                <span class="eyebrow">Contorno do talhao</span>
+                <h3>Escolha como definir a area</h3>
+                <p>Voce pode desenhar no mapa, colar um GeoJSON real ou deixar o sistema montar um formato inicial automaticamente.</p>
+              </div>
+            </div>
+
+            <div class="segmented-row geometry-mode-row">
+              ${renderGeometryModeButton("auto", "Gerar automaticamente", "Usa centro e hectares para criar um contorno inicial.", state.form.geometryMode)}
+              ${renderGeometryModeButton("draw", "Desenhar no mapa", "Voce clica nos pontos do talhao direto no mapa.", state.form.geometryMode)}
+              ${renderGeometryModeButton("import", "Importar GeoJSON", "Cole o contorno real em formato GeoJSON.", state.form.geometryMode)}
+            </div>
+
+            ${state.form.geometryMode === "draw" ? `
+              <div class="geometry-draw-shell">
+                <div class="geometry-map" id="plot-geometry-map" aria-label="Mapa para desenhar o talhao"></div>
+                <div class="geometry-draw-meta">
+                  <div class="metric-box">
+                    <span class="metric-label">Pontos marcados</span>
+                    <span class="metric-value">${state.form.points.length}</span>
+                    <p class="metric-help">${geometrySummary}</p>
+                  </div>
+                  <div class="panel-actions">
+                    <button class="button-secondary" type="button" data-action="undo-geometry-point">Desfazer ultimo ponto</button>
+                    <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
+                  </div>
+                  <p class="tiny">Dica: clique ao redor da borda do talhao. Com 3 pontos ou mais o contorno ja pode ser salvo.</p>
+                </div>
+              </div>
+            ` : ""}
+
+            ${state.form.geometryMode === "import" ? `
+              <div class="field-group full">
+                <label for="plot-geometry-text">GeoJSON do talhao</label>
+                <textarea id="plot-geometry-text" name="geometryText" placeholder='Cole aqui um Polygon, Feature ou FeatureCollection em GeoJSON.'>${escapeHtml(state.form.importText)}</textarea>
+                <p class="tiny">Aceita Polygon, Feature ou FeatureCollection. O sistema pega o primeiro poligono valido.</p>
+              </div>
+            ` : ""}
+
+            ${state.form.geometryMode === "auto" ? `
+              <div class="geometry-auto-note">
+                <strong>Geracao automatica ativa</strong>
+                <p>Se voce nao desenhar nem importar um contorno real, o CampoSat cria um formato inicial a partir da localizacao central e do tamanho em hectares.</p>
+              </div>
+            ` : ""}
+          </div>
+
           <div class="panel-actions" style="margin-top: 18px;">
             <button class="button" type="submit">Salvar talhao</button>
             <a class="button-secondary" href="#/talhoes">Cancelar</a>
@@ -1821,37 +2033,200 @@ function renderFormView() {
       <div class="detail-column">
         <section class="panel">
           <span class="eyebrow">Como o dado entra</span>
-          <h3>Da coordenada para a analise</h3>
+          <h3>Do cadastro para o mapa</h3>
           <div class="micro-list" style="margin-top: 16px;">
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #67f1c9, #7ed9ff);"></span>
               <div class="micro-copy">
-                <strong>Localizacao</strong>
-                <p>Latitude e longitude definem o centro inicial do talhao na tela de mapa.</p>
+                <strong>Centro da area</strong>
+                <p>Se voce informar latitude e longitude, elas ajudam a abrir o mapa no lugar certo e servem de base para o contorno automatico.</p>
               </div>
               <div class="micro-time">Mapa</div>
             </div>
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #ffb55c, #ffe07a);"></span>
               <div class="micro-copy">
-                <strong>Responsavel</strong>
-                <p>Contato do agronomo ja fica pronto para futuros fluxos de alerta.</p>
+                <strong>Contorno real ou automatico</strong>
+                <p>Se houver desenho ou GeoJSON, o sistema usa o formato fiel do talhao. Sem isso, entra o formato gerado automaticamente.</p>
               </div>
-              <div class="micro-time">Alerta</div>
+              <div class="micro-time">Forma</div>
             </div>
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #ff6b6b, #ff9865);"></span>
               <div class="micro-copy">
                 <strong>Primeira leitura</strong>
-                <p>O talhao entra com snapshot inicial e depois pode receber novas analises.</p>
+                <p>O talhao entra com uma primeira leitura e depois pode receber imagens novas e avisos.</p>
               </div>
-              <div class="micro-time">NDVI</div>
+              <div class="micro-time">Leitura</div>
             </div>
           </div>
         </section>
       </div>
     </section>
   `;
+}
+
+function renderGeometryModeButton(value, title, description, current) {
+  return `
+    <button
+      class="segment-button ${value === current ? "active" : ""}"
+      type="button"
+      data-action="set-geometry-mode"
+      data-mode="${value}"
+    >
+      <strong>${title}</strong>
+      <span>${description}</span>
+    </button>
+  `;
+}
+
+function ensureFormDraft(currentUser, activeAgronomist) {
+  if (!state.form.draft) {
+    state.form.draft = {
+      plotName: "",
+      farmName: currentUser?.farmName || "",
+      crop: "Soja",
+      hectares: "",
+      municipality: "",
+      agronomist: activeAgronomist || currentUser?.name || "",
+      lat: "",
+      lon: "",
+      whatsapp: currentUser?.whatsapp || "",
+      notes: ""
+    };
+  } else {
+    state.form.draft.farmName = state.form.draft.farmName || currentUser?.farmName || "";
+    state.form.draft.agronomist = activeAgronomist || currentUser?.name || state.form.draft.agronomist || "";
+    state.form.draft.whatsapp = state.form.draft.whatsapp || currentUser?.whatsapp || "";
+  }
+  return state.form.draft;
+}
+
+function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getActiveAgronomist()) {
+  state.form.draft = {
+    plotName: "",
+    farmName: currentUser?.farmName || "",
+    crop: "Soja",
+    hectares: "",
+    municipality: "",
+    agronomist: activeAgronomist || currentUser?.name || "",
+    lat: "",
+    lon: "",
+    whatsapp: currentUser?.whatsapp || "",
+    notes: ""
+  };
+  state.form.geometryMode = "auto";
+  state.form.points = [];
+  state.form.importText = "";
+  state.form.error = null;
+  state.form.mapCenter = { lat: -15.8, lon: -47.9 };
+  state.form.mapZoom = 4.4;
+}
+
+function closeRing(points) {
+  if (!points.length) return [];
+  const ring = points.map((point) => [Number(point[0]), Number(point[1])]);
+  const [firstLon, firstLat] = ring[0];
+  const [lastLon, lastLat] = ring[ring.length - 1];
+  if (firstLon !== lastLon || firstLat !== lastLat) {
+    ring.push([firstLon, firstLat]);
+  }
+  return ring;
+}
+
+function isValidLngLatPair(value) {
+  return Array.isArray(value) && value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]));
+}
+
+function normalizePolygonGeometry(geometry) {
+  if (!geometry || geometry.type !== "Polygon" || !Array.isArray(geometry.coordinates) || !geometry.coordinates[0]) {
+    return null;
+  }
+  const outerCandidate = Array.isArray(geometry.coordinates[0][0]) ? geometry.coordinates[0] : geometry.coordinates;
+  const outerRing = outerCandidate.filter(isValidLngLatPair).map((pair) => [Number(pair[0]), Number(pair[1])]);
+  if (outerRing.length < 3) return null;
+  return {
+    type: "Polygon",
+    coordinates: [closeRing(outerRing)]
+  };
+}
+
+function extractPolygonGeometry(value) {
+  if (!value || typeof value !== "object") return null;
+  if (value.type === "Polygon") return normalizePolygonGeometry(value);
+  if (value.type === "Feature") return normalizePolygonGeometry(value.geometry);
+  if (value.type === "FeatureCollection" && Array.isArray(value.features)) {
+    for (const feature of value.features) {
+      const geometry = extractPolygonGeometry(feature);
+      if (geometry) return geometry;
+    }
+  }
+  return null;
+}
+
+function parseImportedGeometry(text) {
+  if (!String(text || "").trim()) return null;
+  try {
+    return extractPolygonGeometry(JSON.parse(text));
+  } catch (error) {
+    return null;
+  }
+}
+
+function centroidFromGeometry(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  if (!ring.length) return null;
+  const unique = ring.slice(0, -1);
+  if (!unique.length) return null;
+  const totals = unique.reduce(
+    (current, coordinate) => {
+      current.lon += Number(coordinate[0]);
+      current.lat += Number(coordinate[1]);
+      return current;
+    },
+    { lat: 0, lon: 0 }
+  );
+  return {
+    lat: totals.lat / unique.length,
+    lon: totals.lon / unique.length
+  };
+}
+
+function getDrawnGeometry() {
+  if (state.form.points.length < 3) return null;
+  return {
+    type: "Polygon",
+    coordinates: [closeRing(state.form.points)]
+  };
+}
+
+function getDraftGeometry() {
+  if (state.form.geometryMode === "draw") return getDrawnGeometry();
+  if (state.form.geometryMode === "import") return parseImportedGeometry(state.form.importText);
+  return null;
+}
+
+function getDraftGeometrySummary(geometry) {
+  if (state.form.geometryMode === "draw") {
+    if (state.form.points.length < 3) {
+      return "Marque pelo menos 3 pontos para fechar o contorno da area.";
+    }
+    return "Contorno pronto para salvar usando os pontos clicados no mapa.";
+  }
+  if (state.form.geometryMode === "import") {
+    return geometry ? "GeoJSON valido carregado para este talhao." : "Cole um GeoJSON valido para usar o formato real da area.";
+  }
+  return "Sem contorno manual. O sistema vai gerar um formato inicial automaticamente.";
+}
+
+function syncDraftCenterFromGeometry(geometry) {
+  const center = centroidFromGeometry(geometry);
+  if (!center) return;
+  ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  state.form.draft.lat = center.lat.toFixed(6);
+  state.form.draft.lon = center.lon.toFixed(6);
+  state.form.mapCenter = { lat: center.lat, lon: center.lon };
+  state.form.mapZoom = 15.8;
 }
 
 function renderMarketCards() {
@@ -1950,6 +2325,35 @@ function handleUnauthorized(error) {
 }
 
 async function handleClick(event) {
+  const geometryModeButton = event.target.closest("[data-action='set-geometry-mode']");
+  if (geometryModeButton) {
+    state.form.geometryMode = geometryModeButton.dataset.mode || "auto";
+    state.form.error = null;
+    if (state.form.geometryMode !== "draw") {
+      state.form.points = state.form.geometryMode === "import" ? state.form.points : [];
+    }
+    render();
+    return;
+  }
+
+  const undoGeometryPointButton = event.target.closest("[data-action='undo-geometry-point']");
+  if (undoGeometryPointButton) {
+    state.form.points = state.form.points.slice(0, -1);
+    state.form.error = null;
+    const geometry = getDrawnGeometry();
+    if (geometry) syncDraftCenterFromGeometry(geometry);
+    render();
+    return;
+  }
+
+  const clearGeometryPointsButton = event.target.closest("[data-action='clear-geometry-points']");
+  if (clearGeometryPointsButton) {
+    state.form.points = [];
+    state.form.error = null;
+    render();
+    return;
+  }
+
   const authModeButton = event.target.closest("[data-action='set-auth-mode']");
   if (authModeButton) {
     state.auth.mode = authModeButton.dataset.mode === "register" ? "register" : "login";
@@ -2047,9 +2451,33 @@ function handleChange(event) {
     }
     return;
   }
+  if (event.target.closest("#plot-form")) {
+    ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+    state.form.draft[name] = value;
+    if (name === "geometryText") {
+      state.form.importText = value;
+      state.form.error = null;
+      const geometry = getDraftGeometry();
+      if (geometry) {
+        syncDraftCenterFromGeometry(geometry);
+      }
+    }
+    return;
+  }
   if (!(name in state.filters)) return;
   state.filters[name] = value;
   render();
+}
+
+function handleInput(event) {
+  if (!event.target.closest("#plot-form")) return;
+  const { name, value } = event.target;
+  ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  state.form.draft[name] = value;
+  if (name === "geometryText") {
+    state.form.importText = value;
+    state.form.error = null;
+  }
 }
 
 async function handleSubmit(event) {
@@ -2156,6 +2584,37 @@ async function handleSubmit(event) {
   event.preventDefault();
   const formData = new FormData(event.target);
   const currentUser = getCurrentUser();
+  ensureFormDraft(currentUser, getActiveAgronomist());
+
+  const geometry = getDraftGeometry();
+  const draftLat = String(formData.get("lat") || "").trim();
+  const draftLon = String(formData.get("lon") || "").trim();
+  const latValue = draftLat === "" ? Number.NaN : Number(draftLat);
+  const lonValue = draftLon === "" ? Number.NaN : Number(draftLon);
+
+  if (!String(formData.get("plotName") || "").trim() || !String(formData.get("farmName") || "").trim() || !String(formData.get("municipality") || "").trim()) {
+    state.form.error = "Preencha nome da area, fazenda e municipio para continuar.";
+    render();
+    return;
+  }
+
+  if (state.form.geometryMode === "draw" && !geometry) {
+    state.form.error = "Desenhe pelo menos 3 pontos no mapa para salvar um contorno manual.";
+    render();
+    return;
+  }
+
+  if (state.form.geometryMode === "import" && !geometry) {
+    state.form.error = "Cole um GeoJSON valido para usar o contorno importado.";
+    render();
+    return;
+  }
+
+  if (!geometry && (!Number.isFinite(latValue) || !Number.isFinite(lonValue))) {
+    state.form.error = "Informe latitude e longitude ou escolha desenho/importacao do contorno.";
+    render();
+    return;
+  }
 
   const payload = {
     plotName: String(formData.get("plotName") || "").trim(),
@@ -2163,15 +2622,17 @@ async function handleSubmit(event) {
     crop: String(formData.get("crop") || "Soja"),
     hectares: Number(formData.get("hectares") || 0),
     municipality: String(formData.get("municipality") || "").trim(),
-    lat: Number(formData.get("lat") || 0),
-    lon: Number(formData.get("lon") || 0),
+    lat: Number.isFinite(latValue) ? latValue : null,
+    lon: Number.isFinite(lonValue) ? lonValue : null,
     agronomist: currentUser?.name || String(formData.get("agronomist") || "").trim(),
     whatsapp: String(formData.get("whatsapp") || "").trim() || currentUser?.whatsapp || "",
-    notes: String(formData.get("notes") || "").trim()
+    notes: String(formData.get("notes") || "").trim(),
+    geometry
   };
 
   try {
     state.busy = true;
+    state.form.error = null;
     if (state.offlineMode) {
       createOfflinePlot(payload);
       applyBootstrapPayload(getOfflineBootstrap(), { offlineMode: true });
@@ -2179,11 +2640,14 @@ async function handleSubmit(event) {
       await api("/api/plots", { method: "POST", body: payload });
       await loadBootstrap();
     }
+    resetFormDraft(currentUser, getActiveAgronomist());
     pushToast("Talhao cadastrado", `${payload.plotName} entrou no painel de monitoramento.`);
     window.location.hash = "#/talhoes";
   } catch (error) {
     if (handleUnauthorized(error)) return;
+    state.form.error = error.message || "Nao foi possivel cadastrar o talhao.";
     pushToast("Falha no cadastro", error.message || "Nao foi possivel cadastrar o talhao.");
+    render();
   } finally {
     state.busy = false;
   }
@@ -2312,8 +2776,10 @@ function createOfflinePlot(payload) {
   const offlineState = loadOfflineState();
   const plotId = nextOfflinePlotId(offlineState);
   const crop = payload.crop || "Soja";
-  const lat = Number(payload.lat || 0);
-  const lon = Number(payload.lon || 0);
+  const geometry = payload.geometry ? cloneData(payload.geometry) : null;
+  const geometryCenter = geometry ? centroidFromGeometry(geometry) : null;
+  const lat = Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : geometryCenter?.lat || 0;
+  const lon = Number.isFinite(Number(payload.lon)) ? Number(payload.lon) : geometryCenter?.lon || 0;
   const baseNdvi = crop === "Soja" ? 0.72 : 0.68;
   const plot = {
     id: plotId,
@@ -2324,6 +2790,7 @@ function createOfflinePlot(payload) {
     municipality: String(payload.municipality || "Novo municipio").trim() || "Novo municipio",
     center: { lat, lon },
     coordinatesText: `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+    geometry,
     agronomist: String(payload.agronomist || "").trim(),
     whatsapp: String(payload.whatsapp || "").trim(),
     notes: String(payload.notes || "").trim(),
@@ -2671,7 +3138,82 @@ function localRingToCoordinates(center, ring, bearing) {
   });
 }
 
+function getGeometryBounds(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  return ring.reduce(
+    (bounds, coordinate) => {
+      bounds.minLon = Math.min(bounds.minLon, Number(coordinate[0]));
+      bounds.maxLon = Math.max(bounds.maxLon, Number(coordinate[0]));
+      bounds.minLat = Math.min(bounds.minLat, Number(coordinate[1]));
+      bounds.maxLat = Math.max(bounds.maxLat, Number(coordinate[1]));
+      return bounds;
+    },
+    { minLon: Infinity, maxLon: -Infinity, minLat: Infinity, maxLat: -Infinity }
+  );
+}
+
 function buildPlotGeometry(plot, scene) {
+  if (plot.geometry?.type === "Polygon") {
+    const outline = normalizePolygonGeometry(plot.geometry);
+    if (outline) {
+      const bounds = getGeometryBounds(outline);
+      const centroid = centroidFromGeometry(outline) || plot.center;
+      const centerLineLat = (bounds.minLat + bounds.maxLat) / 2;
+      const centerLineLon = (bounds.minLon + bounds.maxLon) / 2;
+      const lonOffset = ((scene.hotspot.x - 50) / 50) * (bounds.maxLon - bounds.minLon) * 0.2;
+      const latOffset = ((scene.hotspot.y - 50) / 50) * (bounds.maxLat - bounds.minLat) * -0.2;
+      return {
+        bearing: 0,
+        outline,
+        zones: [
+          {
+            type: "Feature",
+            properties: {
+              id: "real-outline",
+              fill: scene.zones?.[0]?.fill || "#8cdf8a",
+              stroke: scene.zones?.[0]?.stroke || "#d8ffd8"
+            },
+            geometry: outline
+          }
+        ],
+        grid: [
+          {
+            type: "Feature",
+            properties: { axis: "vertical" },
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [centerLineLon, bounds.minLat],
+                [centerLineLon, bounds.maxLat]
+              ]
+            }
+          },
+          {
+            type: "Feature",
+            properties: { axis: "horizontal" },
+            geometry: {
+              type: "LineString",
+              coordinates: [
+                [bounds.minLon, centerLineLat],
+                [bounds.maxLon, centerLineLat]
+              ]
+            }
+          }
+        ],
+        hotspot: {
+          type: "Feature",
+          properties: {
+            label: scene.hotspot.label
+          },
+          geometry: {
+            type: "Point",
+            coordinates: [centroid.lon + lonOffset, centroid.lat + latOffset]
+          }
+        }
+      };
+    }
+  }
+
   const seed = hashPlotSeed(`${plot.id}-${plot.name}-${plot.farmName}`);
   const aspect = 1.12 + (seed % 5) * 0.12;
   const areaM2 = Math.max(12000, plot.hectares * 10000);

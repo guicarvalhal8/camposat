@@ -986,6 +986,94 @@ optgroup {
   resize: vertical;
 }
 
+.geometry-shell {
+  margin-top: 22px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.segmented-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.segment-button {
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  padding: 16px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.segment-button strong,
+.segment-button span {
+  display: block;
+}
+
+.segment-button span {
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.9rem;
+}
+
+.segment-button.active {
+  border-color: rgba(103, 241, 201, 0.34);
+  background: rgba(103, 241, 201, 0.1);
+}
+
+.segment-button:hover {
+  transform: translateY(-2px);
+}
+
+.geometry-mode-row {
+  margin-top: 18px;
+}
+
+.geometry-draw-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.geometry-map {
+  min-height: 360px;
+  border-radius: 24px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #08131a;
+}
+
+.geometry-draw-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.geometry-auto-note {
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.geometry-auto-note strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.geometry-auto-note p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .field-group input:focus,
 .field-group select:focus,
 .field-group textarea:focus {
