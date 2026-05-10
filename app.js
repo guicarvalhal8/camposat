@@ -162,24 +162,24 @@ function hoursAgoLabel(hoursAgo) {
 function getOfflineProviders() {
   return {
     satellite: {
-      name: "Sentinel Hub adapter",
+      name: "Integracao Sentinel Hub",
       mode: "offline-browser",
-      status: "ready"
+      status: "pronto"
     },
     weather: {
-      name: "Weather adapter",
+      name: "Integracao de clima",
       mode: "offline-browser",
-      status: "ready"
+      status: "pronto"
     },
     market: {
-      name: "Market adapter",
+      name: "Integracao de mercado",
       mode: "offline-browser",
-      status: "ready"
+      status: "pronto"
     },
     whatsapp: {
-      name: "WhatsApp adapter",
+      name: "Integracao WhatsApp",
       mode: "offline-browser",
-      status: "ready"
+      status: "pronto"
     }
   };
 }
@@ -490,13 +490,13 @@ function buildOfflineSeed() {
         label: "Soja saca 60kg",
         price: 128.4,
         change: 1.8,
-        source: "Feed demo local"
+        source: "Fonte demo local"
       },
       corn: {
         label: "Milho saca 60kg",
         price: 69.7,
         change: -0.6,
-        source: "Feed demo local"
+        source: "Fonte demo local"
       }
     },
     farms,
@@ -1255,7 +1255,7 @@ function renderTopbar(route, activePlot) {
         <div class="chip-row">
           <span class="chip"><strong>Modo:</strong> ${modeLabel}</span>
           <span class="chip"><strong>Agronomo:</strong> ${activeAgronomist || "--"}</span>
-          <span class="chip"><strong>Fonte:</strong> ${state.providers?.satellite?.name || "Adapter"}</span>
+          <span class="chip"><strong>Fonte:</strong> ${state.providers?.satellite?.name || "Integracao local"}</span>
           <span class="chip"><strong>Atualizado:</strong> ${state.meta?.lastUpdated || "--"}</span>
         </div>
       </div>
@@ -1386,16 +1386,13 @@ function renderDashboardView() {
         <section class="panel">
           <div class="panel-header">
             <div>
-              <span class="eyebrow">Mercado e providers</span>
-              <h3>Contexto operacional</h3>
-              <p>Mercado local e status dos adapters que vao receber as integracoes reais.</p>
+              <span class="eyebrow">Mercado</span>
+              <h3>Precos de referencia</h3>
+              <p>Consulte os valores mais recentes de soja e milho para apoiar a leitura operacional.</p>
             </div>
           </div>
           <div class="commodity-grid" style="margin-top: 18px;">
             ${renderMarketCards()}
-          </div>
-          <div class="provider-grid" style="margin-top: 18px;">
-            ${renderProviderCards()}
           </div>
         </section>
 
@@ -1900,28 +1897,15 @@ function renderMarketCards() {
       <span class="metric-label">${state.market.soy.label}</span>
       <span class="metric-value">${formatCurrency(state.market.soy.price)}</span>
       <span class="metric-delta ${state.market.soy.change >= 0 ? "up" : "down"}">${formatSigned(state.market.soy.change)}</span>
+      <span class="tiny market-source">Fonte: ${state.market.soy.source}</span>
     </div>
     <div class="metric-box">
       <span class="metric-label">${state.market.corn.label}</span>
       <span class="metric-value">${formatCurrency(state.market.corn.price)}</span>
       <span class="metric-delta ${state.market.corn.change >= 0 ? "up" : "down"}">${formatSigned(state.market.corn.change)}</span>
+      <span class="tiny market-source">Fonte: ${state.market.corn.source}</span>
     </div>
   `;
-}
-
-function renderProviderCards() {
-  if (!state.providers) return "";
-  return Object.entries(state.providers)
-    .map(
-      ([key, provider]) => `
-        <div class="provider-card">
-          <span class="eyebrow">${key}</span>
-          <strong>${provider.name}</strong>
-          <p class="tiny">${provider.mode} / ${provider.status}</p>
-        </div>
-      `
-    )
-    .join("");
 }
 
 function renderAlertSummaryCard(alert) {

@@ -1492,6 +1492,12 @@ optgroup {
   margin-top: 8px;
 }
 
+.market-source {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+
 .map-toolbar {
   display: flex;
   flex-direction: column;
