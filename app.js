@@ -5,6 +5,7 @@ const brand = {
 };
 
 const defaultFilters = {
+  portfolioAgronomist: "",
   plotQuery: "",
   plotStatus: "all",
   plotCrop: "all",
@@ -19,10 +20,14 @@ const defaultLayers = {
   hotspots: true
 };
 
+const LOCAL_STORAGE_KEY = "camposat-offline-state-v1";
+const AUTH_STORAGE_KEY = "camposat-auth-v1";
+
 const state = {
   loading: true,
   busy: false,
   error: null,
+  offlineMode: false,
   plots: [],
   alerts: [],
   market: null,
@@ -33,8 +38,16 @@ const state = {
     sceneIndexByPlot: {},
     layersByPlot: {}
   },
+  auth: {
+    users: [],
+    currentUserId: null,
+    mode: "login",
+    error: null
+  },
   toast: null
 };
+
+let memoryOfflineState = null;
 
 const app = document.getElementById("app");
 
@@ -51,6 +64,7 @@ if (!window.location.hash) {
   window.location.hash = "#/talhoes";
 }
 
+hydrateAuthState();
 void loadBootstrap();
 
 async function loadBootstrap() {
@@ -59,19 +73,41 @@ async function loadBootstrap() {
   render();
 
   try {
+    const session = await api("/api/auth/session");
+    syncAuthenticatedUser(session.user, { persistLocal: false });
     const payload = await api("/api/bootstrap");
-    state.plots = payload.plots || [];
-    state.alerts = payload.alerts || [];
-    state.market = payload.market || null;
-    state.providers = payload.providers || null;
-    state.meta = payload.meta || null;
-    state.loading = false;
-    render();
+    applyBootstrapPayload(payload, { offlineMode: false });
   } catch (error) {
-    state.loading = false;
-    state.error = error.message || "Nao foi possivel carregar os dados.";
-    render();
+    if (error?.status === 401) {
+      state.offlineMode = false;
+      clearAuthenticatedUser({ preserveUsers: false });
+      state.loading = false;
+      state.error = null;
+      render();
+      return;
+    }
+    try {
+      const payload = getOfflineBootstrap();
+      applyBootstrapPayload(payload, { offlineMode: true });
+    } catch (offlineError) {
+      state.loading = false;
+      state.error = offlineError.message || error.message || "Nao foi possivel carregar os dados.";
+      render();
+    }
   }
+}
+
+function applyBootstrapPayload(payload, options = {}) {
+  state.offlineMode = Boolean(options.offlineMode);
+  state.plots = payload.plots || [];
+  state.alerts = payload.alerts || [];
+  state.market = payload.market || null;
+  state.providers = payload.providers || null;
+  state.meta = payload.meta || null;
+  ensureSelectedAgronomist();
+  state.loading = false;
+  state.error = null;
+  render();
 }
 
 async function api(path, options = {}) {
@@ -86,15 +122,538 @@ async function api(path, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Falha na requisicao ${response.status}.`);
+    let message = text;
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed.error || parsed.message || text;
+    } catch (parseError) {
+      message = text;
+    }
+    const error = new Error(message || `Falha na requisicao ${response.status}.`);
+    error.status = response.status;
+    throw error;
   }
 
   return response.json();
 }
 
+function cloneData(value) {
+  if (typeof structuredClone === "function") {
+    return structuredClone(value);
+  }
+  return JSON.parse(JSON.stringify(value));
+}
+
+function nowLabel() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+function hoursAgoLabel(hoursAgo) {
+  const date = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getOfflineProviders() {
+  return {
+    satellite: {
+      name: "Sentinel Hub adapter",
+      mode: "offline-browser",
+      status: "ready"
+    },
+    weather: {
+      name: "Weather adapter",
+      mode: "offline-browser",
+      status: "ready"
+    },
+    market: {
+      name: "Market adapter",
+      mode: "offline-browser",
+      status: "ready"
+    },
+    whatsapp: {
+      name: "WhatsApp adapter",
+      mode: "offline-browser",
+      status: "ready"
+    }
+  };
+}
+
+function buildOfflineWeather(crop, status, ndvi) {
+  const baseTemp = crop === "Soja" ? 25 : 27;
+  const rainMm = status === "green" ? 14 : status === "yellow" ? 5 : 1;
+  const humidity = status === "green" ? 81 : status === "yellow" ? 66 : 54;
+  const windKmh = status === "green" ? 7 : status === "yellow" ? 12 : 15;
+  return {
+    tempC: Number((baseTemp + (0.6 - ndvi) * 10).toFixed(1)),
+    rainMm,
+    humidity,
+    windKmh
+  };
+}
+
+function buildOfflineZones(status) {
+  if (status === "red") {
+    return [
+      { id: "A1", fill: "#97dc79", stroke: "#e0ffd4" },
+      { id: "A2", fill: "#ffd265", stroke: "#ffe9a8" },
+      { id: "A3", fill: "#ff915c", stroke: "#ffd4bd" },
+      { id: "A4", fill: "#ff6b6b", stroke: "#ffc3c3" }
+    ];
+  }
+  if (status === "yellow") {
+    return [
+      { id: "A1", fill: "#96df87", stroke: "#defed7" },
+      { id: "A2", fill: "#f0d06b", stroke: "#fbe9b1" },
+      { id: "A3", fill: "#f3bf67", stroke: "#ffe2aa" },
+      { id: "A4", fill: "#9edc87", stroke: "#e1ffd7" }
+    ];
+  }
+  return [
+    { id: "A1", fill: "#8cdf8a", stroke: "#d8ffd8" },
+    { id: "A2", fill: "#80d88d", stroke: "#cfffd3" },
+    { id: "A3", fill: "#93dd97", stroke: "#dbffe0" },
+    { id: "A4", fill: "#7fd786", stroke: "#ceffd0" }
+  ];
+}
+
+function buildOfflineSnapshot(plotId, crop, options) {
+  const {
+    index,
+    capturedAt,
+    ndvi,
+    previousNdvi,
+    status,
+    affectedAreaHa,
+    issue,
+    cloudCoverage,
+    hotspot
+  } = options;
+
+  return {
+    id: `SN-${plotId.replace("-", "")}-${String(index).padStart(2, "0")}`,
+    capturedAt,
+    ndvi,
+    delta: Number((ndvi - previousNdvi).toFixed(2)),
+    status,
+    affectedAreaHa,
+    issue,
+    cloudCoverage,
+    source: "Sentinel-2 L2A",
+    resolutionM: 10,
+    sceneId: `S2-DEMO-${plotId}-${String(index).padStart(2, "0")}`,
+    weather: buildOfflineWeather(crop, status, ndvi),
+    zones: buildOfflineZones(status),
+    hotspot
+  };
+}
+
+function buildOfflinePlot(config) {
+  const snapshots = config.snapshots.map((snapshot, index) =>
+    buildOfflineSnapshot(config.id, config.crop, {
+      index: index + 1,
+      capturedAt: snapshot.capturedAt,
+      ndvi: snapshot.ndvi,
+      previousNdvi: index ? config.snapshots[index - 1].ndvi : snapshot.ndvi,
+      status: snapshot.status,
+      affectedAreaHa: snapshot.affectedAreaHa,
+      issue: snapshot.issue,
+      cloudCoverage: snapshot.cloudCoverage,
+      hotspot: snapshot.hotspot
+    })
+  );
+
+  return {
+    id: config.id,
+    name: config.name,
+    farmName: config.farmName,
+    crop: config.crop,
+    hectares: config.hectares,
+    municipality: config.municipality,
+    center: config.center,
+    coordinatesText: `${config.center.lat.toFixed(4)}, ${config.center.lon.toFixed(4)}`,
+    agronomist: config.agronomist,
+    whatsapp: config.whatsapp,
+    notes: config.notes,
+    snapshots,
+    alerts: (config.alerts || []).map((alert) => ({
+      id: alert.id,
+      when: alert.when,
+      severity: alert.severity,
+      sent: alert.sent,
+      summary: alert.summary,
+      snapshotId: alert.snapshotId
+    }))
+  };
+}
+
+function buildOfflineSeed() {
+  const plots = [
+    buildOfflinePlot({
+      id: "TL-01",
+      name: "Talhao Norte",
+      farmName: "Fazenda Aurora",
+      crop: "Soja",
+      hectares: 128,
+      municipality: "Sorriso, MT",
+      center: { lat: -12.5471, lon: -55.7118 },
+      agronomist: "Marina Costa",
+      whatsapp: "+55 65 99971-1221",
+      notes: "Acesso principal pela borda leste.",
+      snapshots: [
+        {
+          capturedAt: hoursAgoLabel(360),
+          ndvi: 0.69,
+          status: "green",
+          affectedAreaHa: 3,
+          issue: "Cobertura uniforme e boa resposta vegetativa.",
+          cloudCoverage: 12,
+          hotspot: { x: 72, y: 58, radius: 10, label: "Baixa variacao" }
+        },
+        {
+          capturedAt: hoursAgoLabel(240),
+          ndvi: 0.74,
+          status: "green",
+          affectedAreaHa: 2,
+          issue: "Recuperacao de borda e vigor em crescimento.",
+          cloudCoverage: 8,
+          hotspot: { x: 68, y: 54, radius: 9, label: "Borda leste" }
+        },
+        {
+          capturedAt: hoursAgoLabel(120),
+          ndvi: 0.79,
+          status: "green",
+          affectedAreaHa: 1,
+          issue: "Indice alto e sem anomalia relevante.",
+          cloudCoverage: 6,
+          hotspot: { x: 64, y: 50, radius: 7, label: "Sem risco" }
+        }
+      ],
+      alerts: [
+        {
+          id: "AL-3158",
+          when: hoursAgoLabel(120),
+          severity: "Baixa",
+          sent: false,
+          summary: "Variacao leve em borda leste, abaixo do limiar de disparo.",
+          snapshotId: "SN-TL01-03"
+        }
+      ]
+    }),
+    buildOfflinePlot({
+      id: "TL-02",
+      name: "Pivoto 4",
+      farmName: "Fazenda Horizonte",
+      crop: "Milho",
+      hectares: 94,
+      municipality: "Lucas do Rio Verde, MT",
+      center: { lat: -13.0741, lon: -55.911 },
+      agronomist: "Rafael Gama",
+      whatsapp: "+55 65 99931-8342",
+      notes: "Revisar setor sudoeste em visitas rotineiras.",
+      snapshots: [
+        {
+          capturedAt: hoursAgoLabel(360),
+          ndvi: 0.76,
+          status: "green",
+          affectedAreaHa: 4,
+          issue: "Pivoto em equilibrio com pequenas manchas secas.",
+          cloudCoverage: 15,
+          hotspot: { x: 61, y: 63, radius: 14, label: "Sudoeste" }
+        },
+        {
+          capturedAt: hoursAgoLabel(240),
+          ndvi: 0.67,
+          status: "yellow",
+          affectedAreaHa: 9,
+          issue: "Persistencia de sinal amarelo no setor sudoeste.",
+          cloudCoverage: 11,
+          hotspot: { x: 60, y: 65, radius: 18, label: "Setor 3" }
+        },
+        {
+          capturedAt: hoursAgoLabel(120),
+          ndvi: 0.58,
+          status: "yellow",
+          affectedAreaHa: 12,
+          issue: "Estresse persistente com necessidade de nova vistoria.",
+          cloudCoverage: 10,
+          hotspot: { x: 58, y: 66, radius: 21, label: "Setor com estresse" }
+        }
+      ],
+      alerts: [
+        {
+          id: "AL-3159",
+          when: hoursAgoLabel(120),
+          severity: "Media",
+          sent: true,
+          summary: "Anomalia persistente com NDVI 0.58 e foco em 12 ha.",
+          snapshotId: "SN-TL02-03"
+        }
+      ]
+    }),
+    buildOfflinePlot({
+      id: "TL-03",
+      name: "Baixa do Cedro",
+      farmName: "Fazenda Cedro Alto",
+      crop: "Soja",
+      hectares: 71,
+      municipality: "Rio Verde, GO",
+      center: { lat: -17.7812, lon: -50.9291 },
+      agronomist: "Bianca Salles",
+      whatsapp: "+55 64 99922-1840",
+      notes: "Talhao com drenagem irregular na faixa central.",
+      snapshots: [
+        {
+          capturedAt: hoursAgoLabel(360),
+          ndvi: 0.63,
+          status: "yellow",
+          affectedAreaHa: 8,
+          issue: "Mancha de variacao no centro com inicio de perda de vigor.",
+          cloudCoverage: 13,
+          hotspot: { x: 52, y: 52, radius: 17, label: "Faixa central" }
+        },
+        {
+          capturedAt: hoursAgoLabel(240),
+          ndvi: 0.54,
+          status: "red",
+          affectedAreaHa: 14,
+          issue: "A area em observacao piorou e cruzou o limiar de alerta alto.",
+          cloudCoverage: 14,
+          hotspot: { x: 50, y: 51, radius: 24, label: "Hotspot em ampliacao" }
+        },
+        {
+          capturedAt: hoursAgoLabel(120),
+          ndvi: 0.49,
+          status: "red",
+          affectedAreaHa: 18,
+          issue: "Nova queda confirmada no setor central com expansao para a borda sul.",
+          cloudCoverage: 15,
+          hotspot: { x: 48, y: 52, radius: 28, label: "Expansao sul" }
+        }
+      ],
+      alerts: [
+        {
+          id: "AL-3160",
+          when: hoursAgoLabel(120),
+          severity: "Alta",
+          sent: true,
+          summary: "Queda adicional para NDVI 0.49. Revisar 18 ha com urgencia.",
+          snapshotId: "SN-TL03-03"
+        }
+      ]
+    })
+  ];
+
+  return {
+    meta: {
+      lastUpdated: nowLabel(),
+      version: 1
+    },
+    providers: getOfflineProviders(),
+    market: {
+      updatedAt: nowLabel(),
+      soy: {
+        label: "Soja saca 60kg",
+        price: 128.4,
+        change: 1.8,
+        source: "Feed demo local"
+      },
+      corn: {
+        label: "Milho saca 60kg",
+        price: 69.7,
+        change: -0.6,
+        source: "Feed demo local"
+      }
+    },
+    plots,
+    alerts: plots
+      .flatMap((plot) =>
+        plot.alerts.map((alert) => ({
+          id: alert.id,
+          plotId: plot.id,
+          plotName: plot.name,
+          when: alert.when,
+          severity: alert.severity,
+          sent: alert.sent,
+          summary: alert.summary,
+          snapshotId: alert.snapshotId
+        }))
+      )
+      .sort((left, right) => right.when.localeCompare(left.when))
+  };
+}
+
+function loadOfflineState() {
+  if (memoryOfflineState) {
+    return cloneData(memoryOfflineState);
+  }
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      memoryOfflineState = cloneData(parsed);
+      return cloneData(parsed);
+    }
+  } catch (error) {
+    // Ignore localStorage issues and continue with in-memory fallback.
+  }
+
+  const seed = buildOfflineSeed();
+  memoryOfflineState = cloneData(seed);
+  saveOfflineState(seed);
+  return cloneData(seed);
+}
+
+function saveOfflineState(offlineState) {
+  const nextState = cloneData(offlineState);
+  nextState.meta = nextState.meta || {};
+  nextState.meta.lastUpdated = nowLabel();
+  nextState.providers = getOfflineProviders();
+  if (nextState.market) {
+    nextState.market.updatedAt = nowLabel();
+  }
+  memoryOfflineState = cloneData(nextState);
+  try {
+    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextState));
+  } catch (error) {
+    // Keep the in-memory copy when storage is unavailable.
+  }
+}
+
+function getOfflineBootstrap() {
+  const offlineState = loadOfflineState();
+  saveOfflineState(offlineState);
+  return loadOfflineState();
+}
+
+function buildAuthSeed() {
+  return {
+    users: [
+      {
+        id: "AG-01",
+        name: "Marina Costa",
+        email: "marina@camposat.demo",
+        password: "camposat123",
+        farmName: "Fazenda Aurora",
+        whatsapp: "+55 65 99971-1221",
+        createdAt: nowLabel()
+      },
+      {
+        id: "AG-02",
+        name: "Rafael Gama",
+        email: "rafael@camposat.demo",
+        password: "camposat123",
+        farmName: "Fazenda Horizonte",
+        whatsapp: "+55 65 99931-8342",
+        createdAt: nowLabel()
+      },
+      {
+        id: "AG-03",
+        name: "Bianca Salles",
+        email: "bianca@camposat.demo",
+        password: "camposat123",
+        farmName: "Fazenda Cedro Alto",
+        whatsapp: "+55 64 99922-1840",
+        createdAt: nowLabel()
+      }
+    ],
+    currentUserId: null
+  };
+}
+
+function loadAuthState() {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) {
+      return buildAuthSeed();
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      users: Array.isArray(parsed.users) ? parsed.users : [],
+      currentUserId: parsed.currentUserId || null
+    };
+  } catch (error) {
+    return buildAuthSeed();
+  }
+}
+
+function saveAuthState() {
+  try {
+    window.localStorage.setItem(
+      AUTH_STORAGE_KEY,
+      JSON.stringify({
+        users: state.auth.users,
+        currentUserId: state.auth.currentUserId
+      })
+    );
+  } catch (error) {
+    // Ignore browser storage failures for auth demo mode.
+  }
+}
+
+function hydrateAuthState() {
+  const authState = loadAuthState();
+  state.auth.users = authState.users || [];
+  state.auth.currentUserId = authState.currentUserId || null;
+  state.auth.error = null;
+}
+
+function syncAuthenticatedUser(user, options = {}) {
+  if (!user) {
+    clearAuthenticatedUser(options);
+    return;
+  }
+
+  const current = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    farmName: user.farmName || "",
+    whatsapp: user.whatsapp || "",
+    createdAt: user.createdAt || ""
+  };
+
+  state.auth.users = [current];
+  state.auth.currentUserId = current.id;
+  state.auth.error = null;
+  state.filters.portfolioAgronomist = current.name;
+
+  if (options.persistLocal !== false) {
+    saveAuthState();
+  }
+}
+
+function clearAuthenticatedUser(options = {}) {
+  state.auth.currentUserId = null;
+  state.auth.error = null;
+  state.filters.portfolioAgronomist = "";
+  if (!options.preserveUsers) {
+    state.auth.users = [];
+  }
+  if (options.persistLocal !== false) {
+    saveAuthState();
+  }
+}
+
+function getCurrentUser() {
+  return state.auth.users.find((user) => user.id === state.auth.currentUserId) || null;
+}
+
+function isAuthenticated() {
+  return Boolean(getCurrentUser());
+}
+
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
 function render() {
   const route = getRoute();
-  const activePlot = getPlot(route.plotId) || getMostCriticalPlot(state.plots) || state.plots[0] || null;
+  const portfolioPlots = getPortfolioPlots();
+  const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
 
   if (state.loading) {
     app.innerHTML = renderLoadingShell();
@@ -103,6 +662,11 @@ function render() {
 
   if (state.error) {
     app.innerHTML = renderErrorShell(state.error);
+    return;
+  }
+
+  if (!isAuthenticated()) {
+    app.innerHTML = renderAuthShell();
     return;
   }
 
@@ -192,7 +756,102 @@ function renderErrorShell(message) {
   `;
 }
 
+function renderAuthShell() {
+  const isRegister = state.auth.mode === "register";
+  return `
+    <div class="auth-shell">
+      <section class="auth-card">
+        <div class="brand auth-brand">
+          <div class="logo">
+            <span class="logo-sigil">${iconLeaf()}</span>
+            <div class="brand-copy">
+              <span class="eyebrow">${brand.subtitle}</span>
+              <h1>${brand.name}</h1>
+            </div>
+          </div>
+          <p class="sidebar-copy">${brand.promise}</p>
+        </div>
+
+        <div class="auth-copy">
+          <span class="eyebrow">${isRegister ? "Primeiro acesso" : "Acesso do agronomo"}</span>
+          <h2>${isRegister ? "Criar conta do agronomo" : "Entrar na sua carteira"}</h2>
+          <p>${isRegister ? "Cadastre seu perfil para acessar apenas as fazendas e talhoes sob sua responsabilidade." : "Entre para visualizar somente os dados da sua carteira de fazendas, talhoes e alertas."}</p>
+        </div>
+
+        <div class="auth-tabs">
+          <button class="button-secondary ${!isRegister ? "active-auth-tab" : ""}" type="button" data-action="set-auth-mode" data-mode="login">Entrar</button>
+          <button class="button-secondary ${isRegister ? "active-auth-tab" : ""}" type="button" data-action="set-auth-mode" data-mode="register">Criar conta</button>
+        </div>
+
+        ${state.auth.error ? `<div class="auth-error">${escapeHtml(state.auth.error)}</div>` : ""}
+
+        ${
+          isRegister
+            ? `
+              <form id="auth-register-form" class="auth-form">
+                <div class="field-grid auth-grid">
+                  <div class="field-group">
+                    <label for="register-name">Nome completo</label>
+                    <input id="register-name" name="name" placeholder="Ex.: Rafael Gama" required />
+                  </div>
+                  <div class="field-group">
+                    <label for="register-email">E-mail</label>
+                    <input id="register-email" name="email" type="email" placeholder="voce@fazenda.com" required />
+                  </div>
+                  <div class="field-group">
+                    <label for="register-farm">Fazenda principal</label>
+                    <input id="register-farm" name="farmName" placeholder="Ex.: Fazenda Horizonte" />
+                  </div>
+                  <div class="field-group">
+                    <label for="register-whatsapp">WhatsApp</label>
+                    <input id="register-whatsapp" name="whatsapp" placeholder="+55 65 99999-9999" />
+                  </div>
+                  <div class="field-group">
+                    <label for="register-password">Senha</label>
+                    <input id="register-password" name="password" type="password" placeholder="Minimo de 6 caracteres" required />
+                  </div>
+                  <div class="field-group">
+                    <label for="register-confirm">Confirmar senha</label>
+                    <input id="register-confirm" name="confirmPassword" type="password" placeholder="Repita a senha" required />
+                  </div>
+                </div>
+                <div class="panel-actions" style="margin-top: 18px;">
+                  <button class="button" type="submit">Criar conta e entrar</button>
+                </div>
+              </form>
+            `
+            : `
+              <form id="auth-login-form" class="auth-form">
+                <div class="field-grid auth-grid">
+                  <div class="field-group">
+                    <label for="login-email">E-mail</label>
+                    <input id="login-email" name="email" type="email" placeholder="voce@fazenda.com" required />
+                  </div>
+                  <div class="field-group">
+                    <label for="login-password">Senha</label>
+                    <input id="login-password" name="password" type="password" placeholder="Sua senha" required />
+                  </div>
+                </div>
+                <div class="panel-actions" style="margin-top: 18px;">
+                  <button class="button" type="submit">Entrar</button>
+                </div>
+              </form>
+              <div class="auth-helper">
+                <strong>Contas demo</strong>
+                <p>Use marina@camposat.demo, rafael@camposat.demo ou bianca@camposat.demo com a senha camposat123.</p>
+              </div>
+            `
+        }
+      </section>
+    </div>
+  `;
+}
+
 function renderSidebar(route) {
+  const portfolioPlots = getPortfolioPlots();
+  const portfolioAlerts = getPortfolioAlerts();
+  const activeAgronomist = getActiveAgronomist();
+  const currentUser = getCurrentUser();
   const navGroups = [
     {
       label: "Monitoramento",
@@ -205,7 +864,7 @@ function renderSidebar(route) {
           icon: iconGrid()
         },
         {
-          href: `#/talhao/${(getMostCriticalPlot(state.plots) || state.plots[0] || { id: "TL-01" }).id}`,
+          href: portfolioPlots.length ? `#/talhao/${(getMostCriticalPlot(portfolioPlots) || portfolioPlots[0]).id}` : "#/cadastro",
           key: "detail",
           title: "Mapa do talhao",
           text: "Camadas, cena e clima",
@@ -234,8 +893,8 @@ function renderSidebar(route) {
     }
   ];
 
-  const redAlerts = state.alerts.filter((alert) => alert.severity === "Alta").length;
-  const sentAlerts = state.alerts.filter((alert) => alert.sent).length;
+  const redAlerts = portfolioAlerts.filter((alert) => alert.severity === "Alta").length;
+  const sentAlerts = portfolioAlerts.filter((alert) => alert.sent).length;
 
   return `
     <aside class="sidebar">
@@ -280,12 +939,26 @@ function renderSidebar(route) {
       </nav>
 
       <div class="sidebar-status">
-        <span class="eyebrow">Resumo rapido</span>
-        <h3>${state.plots.length} talhoes monitorados</h3>
-        <p class="tiny">${redAlerts} alertas altos no historico e ${sentAlerts} notificacoes enviadas.</p>
-        <div class="badge-row">
-          <span class="chip"><strong>API</strong> local</span>
-          <span class="chip"><strong>Mapa</strong> detalhado</span>
+        <div class="sidebar-status-block">
+          <span class="eyebrow">Resumo rapido</span>
+          <h3>${portfolioPlots.length} talhoes monitorados</h3>
+          <p class="tiny sidebar-status-copy">${activeAgronomist || "Sem responsavel"} acompanha ${portfolioPlots.length} fazendas/talhoes e ${redAlerts} alertas altos.</p>
+        </div>
+
+        <div class="sidebar-status-block">
+          <div class="metric-box sidebar-userbox">
+            <span class="metric-label">Sessao ativa</span>
+            <span class="metric-value">${activeAgronomist || "--"}</span>
+            <span class="tiny">${currentUser?.email || "Sem e-mail"}</span>
+          </div>
+          <div class="badge-row sidebar-badges">
+            <span class="chip"><strong>${state.offlineMode ? "Modo" : "API"}</strong> ${state.offlineMode ? "offline" : "local"}</span>
+            <span class="chip"><strong>WhatsApp</strong> ${sentAlerts} enviados</span>
+          </div>
+        </div>
+
+        <div class="panel-actions sidebar-actions">
+          <button class="button-secondary" type="button" data-action="logout">Sair</button>
         </div>
       </div>
     </aside>
@@ -294,6 +967,7 @@ function renderSidebar(route) {
 
 function renderTopbar(route, activePlot) {
   const stats = getDashboardStats();
+  const activeAgronomist = getActiveAgronomist();
   let current;
   let modeLabel;
   let primaryKpiLabel;
@@ -304,11 +978,11 @@ function renderTopbar(route, activePlot) {
   if (route.view === "form") {
     current = {
       title: "Cadastro de talhao",
-      text: "Cadastre localizacao, area e responsavel para o talhao entrar na operacao."
+      text: "Cadastre localizacao, area e responsavel para o talhao entrar na carteira do agronomo."
     };
     modeLabel = "cadastro";
     primaryKpiLabel = "Talhoes";
-    primaryKpiValue = String(state.plots.length);
+    primaryKpiValue = String(getPortfolioPlots().length);
     secondaryKpiLabel = "Ultima carga";
     secondaryKpiValue = state.meta?.lastUpdated || "--";
   } else if (route.view === "detail" && activePlot) {
@@ -325,7 +999,7 @@ function renderTopbar(route, activePlot) {
   } else if (route.view === "alerts") {
     current = {
       title: "Historico de alertas",
-      text: "Filtre disparos, acompanhe severidade e confirme notificacoes enviadas."
+      text: "Acompanhe apenas os alertas dos talhoes sob responsabilidade do agronomo selecionado."
     };
     modeLabel = "alertas";
     primaryKpiLabel = "Altos";
@@ -334,12 +1008,12 @@ function renderTopbar(route, activePlot) {
     secondaryKpiValue = String(stats.pendingAlerts);
   } else {
     current = {
-      title: "Painel operacional",
-      text: "Acompanhe saude da vegetacao, mercado, providers e analises por talhao."
+      title: "Carteira do agronomo",
+      text: "Acompanhe so as fazendas e talhoes vinculados ao responsavel selecionado."
     };
     modeLabel = "monitoramento";
     primaryKpiLabel = "Talhoes ativos";
-    primaryKpiValue = String(state.plots.length);
+    primaryKpiValue = String(getPortfolioPlots().length);
     secondaryKpiLabel = "Criticos";
     secondaryKpiValue = String(stats.redCount);
   }
@@ -347,11 +1021,12 @@ function renderTopbar(route, activePlot) {
   return `
     <header class="topbar">
       <div>
-        <span class="eyebrow">CampoSat / API local</span>
+        <span class="eyebrow">CampoSat / ${state.offlineMode ? "modo offline" : "API local"}</span>
         <h2>${current.title}</h2>
         <p>${current.text}</p>
         <div class="chip-row">
           <span class="chip"><strong>Modo:</strong> ${modeLabel}</span>
+          <span class="chip"><strong>Agronomo:</strong> ${activeAgronomist || "--"}</span>
           <span class="chip"><strong>Fonte:</strong> ${state.providers?.satellite?.name || "Adapter"}</span>
           <span class="chip"><strong>Atualizado:</strong> ${state.meta?.lastUpdated || "--"}</span>
         </div>
@@ -378,25 +1053,27 @@ function renderView(route, activePlot) {
 }
 
 function renderDashboardView() {
+  const portfolioPlots = getPortfolioPlots();
+  const portfolioAlerts = getPortfolioAlerts();
   const filteredPlots = getFilteredPlots();
   const stats = getDashboardStats();
-  const focusPlot = getMostCriticalPlot(filteredPlots.length ? filteredPlots : state.plots) || state.plots[0];
+  const focusPlot = getMostCriticalPlot(filteredPlots.length ? filteredPlots : portfolioPlots) || portfolioPlots[0];
 
   return `
     <div class="workspace-grid">
       <section class="panel">
         <div class="list-head">
           <div>
-            <span class="eyebrow">Controles operacionais</span>
-            <h3>Filtrar e disparar analise</h3>
-            <p>Use busca, status e cultura para localizar rapidamente o talhao certo.</p>
+            <span class="eyebrow">Controles da carteira</span>
+            <h3>Filtrar os talhoes do agronomo</h3>
+            <p>Use responsavel, busca, status e cultura para focar apenas nas fazendas acompanhadas.</p>
           </div>
-          <span class="chip"><strong>${filteredPlots.length}</strong> de ${state.plots.length} talhoes visiveis</span>
+          <span class="chip"><strong>${filteredPlots.length}</strong> de ${portfolioPlots.length} talhoes visiveis</span>
         </div>
         <div class="control-grid" style="margin-top: 22px;">
           <label class="toolbar-field">
             <span>Buscar talhao</span>
-            <input name="plotQuery" value="${escapeHtml(state.filters.plotQuery)}" placeholder="Nome, fazenda, municipio ou agronomo" />
+            <input name="plotQuery" value="${escapeHtml(state.filters.plotQuery)}" placeholder="Nome, fazenda ou municipio" />
           </label>
           <label class="toolbar-field">
             <span>Status</span>
@@ -499,12 +1176,12 @@ function renderDashboardView() {
             <div>
               <span class="eyebrow">Ultimos alertas</span>
               <h3>Fila recente</h3>
-              <p>Resumo rapido das ultimas ocorrencias registradas no historico.</p>
+              <p>Resumo rapido das ultimas ocorrencias dos talhoes dessa carteira.</p>
             </div>
             <a class="button-secondary" href="#/alertas">Abrir historico</a>
           </div>
           <div class="history-list" style="margin-top: 18px;">
-            ${state.alerts.slice(0, 4).map(renderAlertSummaryCard).join("")}
+            ${portfolioAlerts.length ? portfolioAlerts.slice(0, 4).map(renderAlertSummaryCard).join("") : renderEmptyState("Sem alertas nessa carteira", "Os talhoes do agronomo selecionado ainda nao geraram alertas relevantes.")}
           </div>
         </section>
       </div>
@@ -514,7 +1191,7 @@ function renderDashboardView() {
           <div>
             <span class="eyebrow">Talhoes monitorados</span>
             <h3>Lista operacional</h3>
-            <p>Cards com leitura mais recente, clima resumido e acesso para mapa detalhado.</p>
+            <p>Cards com leitura mais recente, clima resumido e acesso para mapa detalhado da carteira ativa.</p>
           </div>
           <a class="button-secondary" href="#/cadastro">Cadastrar talhao</a>
         </div>
@@ -577,8 +1254,36 @@ function renderPlotCard(plot) {
       </div>
 
       <div class="plot-visual">
-        <div class="plot-preview">
-          ${renderHeatmapPreview(scene)}
+        <div class="plot-media-column">
+          <div class="plot-preview">
+            ${renderHeatmapPreview(scene)}
+          </div>
+          <div class="plot-preview-info">
+            <div class="micro-item">
+              <span class="micro-swatch" style="background: linear-gradient(180deg, #67f1c9, #7ed9ff);"></span>
+              <div class="micro-copy">
+                <strong>Cena mais recente</strong>
+                <p>${scene.capturedAt}</p>
+              </div>
+              <div class="micro-time">${scene.cloudCoverage}% nuvem</div>
+            </div>
+            <div class="micro-item">
+              <span class="micro-swatch" style="background: linear-gradient(180deg, #ffb55c, #ffe07a);"></span>
+              <div class="micro-copy">
+                <strong>Hotspot principal</strong>
+                <p>${scene.hotspot.label}</p>
+              </div>
+              <div class="micro-time">${scene.affectedAreaHa} ha</div>
+            </div>
+            <div class="micro-item">
+              <span class="micro-swatch" style="background: linear-gradient(180deg, #ff6b6b, #ff9865);"></span>
+              <div class="micro-copy">
+                <strong>Responsavel</strong>
+                <p>${plot.agronomist}</p>
+              </div>
+              <div class="micro-time">${plot.crop}</div>
+            </div>
+          </div>
         </div>
         <div class="plot-summary">
           <div class="metric-box">
@@ -794,6 +1499,7 @@ function renderDetailView(plot) {
 }
 
 function renderAlertsView() {
+  const portfolioAlerts = getPortfolioAlerts();
   const filteredAlerts = getFilteredAlerts();
   const stats = getDashboardStats();
   return `
@@ -801,11 +1507,11 @@ function renderAlertsView() {
       <section class="panel">
         <div class="list-head">
           <div>
-            <span class="eyebrow">Consulta operacional</span>
-            <h3>Filtrar historico de alertas</h3>
-            <p>Busque por talhao ou resumo e refine por severidade para localizar disparos rapidamente.</p>
+            <span class="eyebrow">Consulta da carteira</span>
+            <h3>Filtrar alertas do agronomo</h3>
+            <p>Busque por talhao ou resumo e refine por severidade para localizar disparos apenas da sua base.</p>
           </div>
-          <span class="chip"><strong>${filteredAlerts.length}</strong> de ${state.alerts.length} alertas visiveis</span>
+          <span class="chip"><strong>${filteredAlerts.length}</strong> de ${portfolioAlerts.length} alertas visiveis</span>
         </div>
         <div class="control-grid" style="margin-top: 22px;">
           <label class="toolbar-field">
@@ -856,6 +1562,8 @@ function renderAlertsView() {
 }
 
 function renderFormView() {
+  const activeAgronomist = getActiveAgronomist();
+  const currentUser = getCurrentUser();
   return `
     <section class="form-shell">
       <div class="panel">
@@ -875,7 +1583,7 @@ function renderFormView() {
             </div>
             <div class="field-group">
               <label for="farm-name">Fazenda</label>
-              <input id="farm-name" name="farmName" placeholder="Ex.: Fazenda Serra Azul" required />
+              <input id="farm-name" name="farmName" value="${escapeHtml(currentUser?.farmName || "")}" placeholder="Ex.: Fazenda Serra Azul" required />
             </div>
             <div class="field-group">
               <label for="plot-crop">Cultura</label>
@@ -894,7 +1602,7 @@ function renderFormView() {
             </div>
             <div class="field-group">
               <label for="plot-agro">Agronomo responsavel</label>
-              <input id="plot-agro" name="agronomist" placeholder="Nome completo" required />
+              <input id="plot-agro" name="agronomist" value="${escapeHtml(activeAgronomist)}" placeholder="Nome completo" readonly required />
             </div>
             <div class="field-group">
               <label for="plot-lat">Latitude</label>
@@ -906,7 +1614,7 @@ function renderFormView() {
             </div>
             <div class="field-group">
               <label for="plot-whatsapp">WhatsApp</label>
-              <input id="plot-whatsapp" name="whatsapp" placeholder="+55 62 99999-9999" required />
+              <input id="plot-whatsapp" name="whatsapp" value="${escapeHtml(currentUser?.whatsapp || "")}" placeholder="+55 62 99999-9999" required />
             </div>
             <div class="field-group full">
               <label for="plot-notes">Observacoes</label>
@@ -1053,7 +1761,41 @@ function renderOption(value, current, label) {
   return `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`;
 }
 
+function handleUnauthorized(error) {
+  if (error?.status !== 401) return false;
+  state.offlineMode = false;
+  clearAuthenticatedUser({ preserveUsers: false, persistLocal: false });
+  state.busy = false;
+  render();
+  return true;
+}
+
 async function handleClick(event) {
+  const authModeButton = event.target.closest("[data-action='set-auth-mode']");
+  if (authModeButton) {
+    state.auth.mode = authModeButton.dataset.mode === "register" ? "register" : "login";
+    state.auth.error = null;
+    render();
+    return;
+  }
+
+  const logoutButton = event.target.closest("[data-action='logout']");
+  if (logoutButton) {
+    if (state.offlineMode) {
+      clearAuthenticatedUser({ preserveUsers: true });
+    } else {
+      try {
+        await api("/api/auth/logout", { method: "POST", body: {} });
+      } catch (error) {
+        // Continue clearing the local session even if the server already dropped it.
+      }
+      clearAuthenticatedUser({ preserveUsers: false, persistLocal: false });
+    }
+    state.filters = { ...defaultFilters };
+    render();
+    return;
+  }
+
   const retryButton = event.target.closest("[data-action='retry-load']");
   if (retryButton) {
     await loadBootstrap();
@@ -1126,9 +1868,109 @@ function handleChange(event) {
 }
 
 async function handleSubmit(event) {
+  if (event.target.id === "auth-login-form") {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const email = normalizeEmail(formData.get("email"));
+    const password = String(formData.get("password") || "");
+    if (state.offlineMode) {
+      const user = state.auth.users.find((item) => normalizeEmail(item.email) === email && item.password === password);
+      if (!user) {
+        state.auth.error = "E-mail ou senha invalidos.";
+        render();
+        return;
+      }
+      syncAuthenticatedUser(user);
+      render();
+      pushToast("Sessao iniciada", `Bem-vindo, ${user.name}.`);
+      return;
+    }
+
+    try {
+      const result = await api("/api/auth/login", { method: "POST", body: { email, password } });
+      syncAuthenticatedUser(result.user, { persistLocal: false });
+      await loadBootstrap();
+      pushToast("Sessao iniciada", `Bem-vindo, ${result.user.name}.`);
+    } catch (error) {
+      state.auth.error = error.message || "Nao foi possivel entrar.";
+      render();
+    }
+    return;
+  }
+
+  if (event.target.id === "auth-register-form") {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const name = String(formData.get("name") || "").trim();
+    const email = normalizeEmail(formData.get("email"));
+    const farmName = String(formData.get("farmName") || "").trim();
+    const whatsapp = String(formData.get("whatsapp") || "").trim();
+    const password = String(formData.get("password") || "");
+    const confirmPassword = String(formData.get("confirmPassword") || "");
+
+    if (!name || !email || !password) {
+      state.auth.error = "Preencha nome, e-mail e senha para continuar.";
+      render();
+      return;
+    }
+
+    if (password.length < 6) {
+      state.auth.error = "A senha precisa ter pelo menos 6 caracteres.";
+      render();
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      state.auth.error = "As senhas nao conferem.";
+      render();
+      return;
+    }
+
+    if (state.offlineMode) {
+      if (state.auth.users.some((item) => normalizeEmail(item.email) === email)) {
+        state.auth.error = "Ja existe uma conta cadastrada com esse e-mail.";
+        render();
+        return;
+      }
+
+      const nextId = `AG-${String(state.auth.users.length + 1).padStart(2, "0")}`;
+      const user = {
+        id: nextId,
+        name,
+        email,
+        password,
+        farmName,
+        whatsapp,
+        createdAt: nowLabel()
+      };
+      state.auth.users.push(user);
+      syncAuthenticatedUser(user);
+      state.auth.mode = "login";
+      render();
+      pushToast("Conta criada", `${user.name} agora acessa apenas a propria carteira.`);
+      return;
+    }
+
+    try {
+      const result = await api("/api/auth/register", {
+        method: "POST",
+        body: { name, email, password, farmName, whatsapp }
+      });
+      syncAuthenticatedUser(result.user, { persistLocal: false });
+      state.auth.mode = "login";
+      await loadBootstrap();
+      pushToast("Conta criada", `${result.user.name} agora acessa apenas a propria carteira.`);
+    } catch (error) {
+      state.auth.error = error.message || "Nao foi possivel criar a conta.";
+      render();
+    }
+    return;
+  }
+
   if (event.target.id !== "plot-form") return;
   event.preventDefault();
   const formData = new FormData(event.target);
+  const currentUser = getCurrentUser();
 
   const payload = {
     plotName: String(formData.get("plotName") || "").trim(),
@@ -1138,18 +1980,24 @@ async function handleSubmit(event) {
     municipality: String(formData.get("municipality") || "").trim(),
     lat: Number(formData.get("lat") || 0),
     lon: Number(formData.get("lon") || 0),
-    agronomist: String(formData.get("agronomist") || "").trim(),
-    whatsapp: String(formData.get("whatsapp") || "").trim(),
+    agronomist: currentUser?.name || String(formData.get("agronomist") || "").trim(),
+    whatsapp: String(formData.get("whatsapp") || "").trim() || currentUser?.whatsapp || "",
     notes: String(formData.get("notes") || "").trim()
   };
 
   try {
     state.busy = true;
-    await api("/api/plots", { method: "POST", body: payload });
-    await loadBootstrap();
+    if (state.offlineMode) {
+      createOfflinePlot(payload);
+      applyBootstrapPayload(getOfflineBootstrap(), { offlineMode: true });
+    } else {
+      await api("/api/plots", { method: "POST", body: payload });
+      await loadBootstrap();
+    }
     pushToast("Talhao cadastrado", `${payload.plotName} entrou no painel de monitoramento.`);
     window.location.hash = "#/talhoes";
   } catch (error) {
+    if (handleUnauthorized(error)) return;
     pushToast("Falha no cadastro", error.message || "Nao foi possivel cadastrar o talhao.");
   } finally {
     state.busy = false;
@@ -1160,8 +2008,14 @@ async function runAnalyze(plotId) {
   if (!plotId || state.busy) return;
   try {
     state.busy = true;
-    const result = await api("/api/analyze", { method: "POST", body: { plotId } });
-    await loadBootstrap();
+    const result = state.offlineMode
+      ? analyzeOfflinePlot(plotId)
+      : await api("/api/analyze", { method: "POST", body: { plotId } });
+    if (state.offlineMode) {
+      applyBootstrapPayload(getOfflineBootstrap(), { offlineMode: true });
+    } else {
+      await loadBootstrap();
+    }
     const scene = getLatestSnapshot(result.plot);
     pushToast(
       "Analise concluida",
@@ -1170,6 +2024,7 @@ async function runAnalyze(plotId) {
         : `${result.plot.name}: cena processada sem disparo de alerta.`
     );
   } catch (error) {
+    if (handleUnauthorized(error)) return;
     pushToast("Falha na analise", error.message || "Nao foi possivel atualizar a leitura.");
   } finally {
     state.busy = false;
@@ -1183,10 +2038,17 @@ async function runAnalyzeBatch(plotIds) {
   }
   try {
     state.busy = true;
-    const result = await api("/api/analyze-batch", { method: "POST", body: { plotIds } });
-    await loadBootstrap();
+    const result = state.offlineMode
+      ? analyzeOfflineBatch(plotIds)
+      : await api("/api/analyze-batch", { method: "POST", body: { plotIds } });
+    if (state.offlineMode) {
+      applyBootstrapPayload(getOfflineBootstrap(), { offlineMode: true });
+    } else {
+      await loadBootstrap();
+    }
     pushToast("Lote concluido", `${result.updated.length} talhoes processados e ${result.alerts.length} alertas novos.`);
   } catch (error) {
+    if (handleUnauthorized(error)) return;
     pushToast("Falha no lote", error.message || "Nao foi possivel executar a analise em lote.");
   } finally {
     state.busy = false;
@@ -1197,20 +2059,203 @@ async function resetData() {
   if (state.busy) return;
   try {
     state.busy = true;
-    await api("/api/reset", { method: "POST", body: {} });
+    if (state.offlineMode) {
+      resetOfflineData();
+    } else {
+      await api("/api/reset", { method: "POST", body: {} });
+    }
     state.filters = { ...defaultFilters };
     state.detail.sceneIndexByPlot = {};
+    state.detail.layersByPlot = {};
     await loadBootstrap();
     pushToast("Dados restaurados", "O aplicativo voltou para o conjunto de dados inicial.");
   } catch (error) {
+    if (handleUnauthorized(error)) return;
     pushToast("Falha ao restaurar", error.message || "Nao foi possivel restaurar os dados.");
   } finally {
     state.busy = false;
   }
 }
 
+function nextOfflinePlotId(offlineState) {
+  const ids = offlineState.plots.map((plot) => Number(plot.id.split("-")[1])).filter((value) => !Number.isNaN(value));
+  return `TL-${String((ids.length ? Math.max(...ids) : 0) + 1).padStart(2, "0")}`;
+}
+
+function nextOfflineAlertId(offlineState) {
+  const ids = offlineState.alerts.map((alert) => Number(alert.id.split("-")[1])).filter((value) => !Number.isNaN(value));
+  return `AL-${(ids.length ? Math.max(...ids) : 3157) + 1}`;
+}
+
+function appendOfflineAlertIfNeeded(offlineState, plot, snapshot) {
+  const severity = severityFromStatus(snapshot.status);
+  if (severity === "Baixa") {
+    return null;
+  }
+
+  const alertId = nextOfflineAlertId(offlineState);
+  const sent = severity !== "Baixa";
+  const summary =
+    severity === "Alta"
+      ? `Queda adicional para NDVI ${snapshot.ndvi.toFixed(2)}. Revisar ${snapshot.affectedAreaHa} ha com urgencia.`
+      : `Anomalia persistente com NDVI ${snapshot.ndvi.toFixed(2)} e foco em ${snapshot.affectedAreaHa} ha.`;
+
+  const alert = {
+    id: alertId,
+    plotId: plot.id,
+    plotName: plot.name,
+    when: snapshot.capturedAt,
+    severity,
+    sent,
+    summary,
+    snapshotId: snapshot.id
+  };
+
+  plot.alerts.unshift({
+    id: alertId,
+    when: snapshot.capturedAt,
+    severity,
+    sent,
+    summary,
+    snapshotId: snapshot.id
+  });
+  offlineState.alerts.unshift(alert);
+  return alert;
+}
+
+function createOfflinePlot(payload) {
+  const offlineState = loadOfflineState();
+  const plotId = nextOfflinePlotId(offlineState);
+  const crop = payload.crop || "Soja";
+  const lat = Number(payload.lat || 0);
+  const lon = Number(payload.lon || 0);
+  const baseNdvi = crop === "Soja" ? 0.72 : 0.68;
+  const plot = {
+    id: plotId,
+    name: String(payload.plotName || "").trim(),
+    farmName: String(payload.farmName || "Novo cadastro").trim() || "Novo cadastro",
+    crop,
+    hectares: Number(payload.hectares || 0),
+    municipality: String(payload.municipality || "Novo municipio").trim() || "Novo municipio",
+    center: { lat, lon },
+    coordinatesText: `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+    agronomist: String(payload.agronomist || "").trim(),
+    whatsapp: String(payload.whatsapp || "").trim(),
+    notes: String(payload.notes || "").trim(),
+    snapshots: [
+      buildOfflineSnapshot(plotId, crop, {
+        index: 1,
+        capturedAt: nowLabel(),
+        ndvi: baseNdvi,
+        previousNdvi: baseNdvi,
+        status: "green",
+        affectedAreaHa: 0,
+        issue: "Primeiro processamento aguardando nova janela do satelite.",
+        cloudCoverage: 11,
+        hotspot: { x: 68, y: 52, radius: 8, label: "Sem risco" }
+      })
+    ],
+    alerts: []
+  };
+  offlineState.plots.unshift(plot);
+  saveOfflineState(offlineState);
+  return { plot: cloneData(plot) };
+}
+
+function analyzeOfflinePlot(plotId) {
+  const offlineState = loadOfflineState();
+  const plot = offlineState.plots.find((item) => item.id === plotId);
+  if (!plot) {
+    throw new Error("Talhao nao encontrado.");
+  }
+
+  const latest = getLatestSnapshot(plot);
+  const nextIndex = plot.snapshots.length + 1;
+  let nextNdvi;
+  let nextStatus;
+  let affectedAreaHa;
+  let issue;
+  let hotspot;
+
+  if (latest.status === "red") {
+    nextNdvi = Math.max(0.28, Number((latest.ndvi - 0.03).toFixed(2)));
+    nextStatus = "red";
+    affectedAreaHa = latest.affectedAreaHa + 3;
+    issue = "Nova queda confirmada no setor central com expansao para a borda sul.";
+    hotspot = {
+      x: Math.max(34, latest.hotspot.x - 2),
+      y: latest.hotspot.y,
+      radius: Math.min(44, latest.hotspot.radius + 4),
+      label: "Hotspot em ampliacao"
+    };
+  } else if (latest.status === "yellow") {
+    nextNdvi = Math.max(0.41, Number((latest.ndvi - 0.04).toFixed(2)));
+    nextStatus = nextNdvi < 0.52 ? "red" : "yellow";
+    affectedAreaHa = latest.affectedAreaHa + (nextStatus === "red" ? 4 : 2);
+    issue =
+      nextStatus === "red"
+        ? "A area em observacao piorou e cruzou o limiar de alerta alto."
+        : "Persistencia de sinal amarelo no setor sudoeste.";
+    hotspot = {
+      x: latest.hotspot.x,
+      y: latest.hotspot.y,
+      radius: Math.min(36, latest.hotspot.radius + 3),
+      label: "Setor com estresse"
+    };
+  } else {
+    nextNdvi = Math.min(0.87, Number((latest.ndvi + 0.02).toFixed(2)));
+    nextStatus = "green";
+    affectedAreaHa = Math.max(0, latest.affectedAreaHa - 1);
+    issue = "Vigor consistente e sem sinais de estresse acima do limiar.";
+    hotspot = {
+      x: latest.hotspot.x,
+      y: latest.hotspot.y,
+      radius: Math.max(6, latest.hotspot.radius - 1),
+      label: "Monitoramento normal"
+    };
+  }
+
+  const snapshot = buildOfflineSnapshot(plot.id, plot.crop, {
+    index: nextIndex,
+    capturedAt: nowLabel(),
+    ndvi: nextNdvi,
+    previousNdvi: latest.ndvi,
+    status: nextStatus,
+    affectedAreaHa,
+    issue,
+    cloudCoverage: Math.max(2, latest.cloudCoverage + (latest.status === "green" ? -1 : 1)),
+    hotspot
+  });
+
+  plot.snapshots.push(snapshot);
+  const alert = appendOfflineAlertIfNeeded(offlineState, plot, snapshot);
+  saveOfflineState(offlineState);
+  return { plot: cloneData(plot), alert };
+}
+
+function analyzeOfflineBatch(plotIds) {
+  const updated = [];
+  const alerts = [];
+  plotIds.forEach((plotId) => {
+    try {
+      const result = analyzeOfflinePlot(plotId);
+      updated.push(result.plot.id);
+      if (result.alert) {
+        alerts.push(result.alert.id);
+      }
+    } catch (error) {
+      // Skip invalid ids and continue processing the rest.
+    }
+  });
+  return { updated, alerts };
+}
+
+function resetOfflineData() {
+  saveOfflineState(buildOfflineSeed());
+}
+
 function getPlot(plotId) {
-  return state.plots.find((plot) => plot.id === plotId);
+  return getPortfolioPlots().find((plot) => plot.id === plotId);
 }
 
 function getLatestSnapshot(plot) {
@@ -1235,11 +2280,46 @@ function getLayers(plotId) {
   return state.detail.layersByPlot[plotId];
 }
 
+function getAgronomistOptions() {
+  const names = [...new Set(state.plots.map((plot) => plot.agronomist).filter(Boolean))];
+  return names.sort((left, right) => left.localeCompare(right, "pt-BR"));
+}
+
+function ensureSelectedAgronomist() {
+  const currentUser = getCurrentUser();
+  if (!currentUser) {
+    state.filters.portfolioAgronomist = "";
+    return;
+  }
+  state.filters.portfolioAgronomist = currentUser.name;
+}
+
+function getActiveAgronomist() {
+  const currentUser = getCurrentUser();
+  if (currentUser) {
+    state.filters.portfolioAgronomist = currentUser.name;
+    return currentUser.name;
+  }
+  ensureSelectedAgronomist();
+  return state.filters.portfolioAgronomist || "";
+}
+
+function getPortfolioPlots() {
+  const agronomist = getActiveAgronomist();
+  if (!agronomist) return [];
+  return state.plots.filter((plot) => plot.agronomist === agronomist);
+}
+
+function getPortfolioAlerts() {
+  const plotIds = new Set(getPortfolioPlots().map((plot) => plot.id));
+  return state.alerts.filter((alert) => plotIds.has(alert.plotId));
+}
+
 function getFilteredPlots() {
   const query = normalizeText(state.filters.plotQuery);
-  return state.plots.filter((plot) => {
+  return getPortfolioPlots().filter((plot) => {
     const scene = getLatestSnapshot(plot);
-    const matchesQuery = !query || normalizeText(`${plot.name} ${plot.farmName} ${plot.municipality} ${plot.agronomist}`).includes(query);
+    const matchesQuery = !query || normalizeText(`${plot.name} ${plot.farmName} ${plot.municipality}`).includes(query);
     const matchesStatus = state.filters.plotStatus === "all" || scene.status === state.filters.plotStatus;
     const matchesCrop = state.filters.plotCrop === "all" || plot.crop === state.filters.plotCrop;
     return matchesQuery && matchesStatus && matchesCrop;
@@ -1248,7 +2328,7 @@ function getFilteredPlots() {
 
 function getFilteredAlerts() {
   const query = normalizeText(state.filters.alertQuery);
-  return state.alerts.filter((alert) => {
+  return getPortfolioAlerts().filter((alert) => {
     const matchesQuery = !query || normalizeText(`${alert.plotName} ${alert.summary} ${alert.when}`).includes(query);
     const matchesSeverity = state.filters.alertSeverity === "all" || alert.severity === state.filters.alertSeverity;
     return matchesQuery && matchesSeverity;
@@ -1256,13 +2336,15 @@ function getFilteredAlerts() {
 }
 
 function getDashboardStats() {
-  const latestScenes = state.plots.map(getLatestSnapshot);
+  const portfolioPlots = getPortfolioPlots();
+  const portfolioAlerts = getPortfolioAlerts();
+  const latestScenes = portfolioPlots.map(getLatestSnapshot);
   const greenCount = latestScenes.filter((scene) => scene.status === "green").length;
   const yellowCount = latestScenes.filter((scene) => scene.status === "yellow").length;
   const redCount = latestScenes.filter((scene) => scene.status === "red").length;
-  const sentAlerts = state.alerts.filter((alert) => alert.sent).length;
-  const pendingAlerts = state.alerts.length - sentAlerts;
-  const redAlerts = state.alerts.filter((alert) => alert.severity === "Alta").length;
+  const sentAlerts = portfolioAlerts.filter((alert) => alert.sent).length;
+  const pendingAlerts = portfolioAlerts.length - sentAlerts;
+  const redAlerts = portfolioAlerts.filter((alert) => alert.severity === "Alta").length;
   const averageNdvi = latestScenes.length
     ? latestScenes.reduce((sum, scene) => sum + scene.ndvi, 0) / latestScenes.length
     : 0;
@@ -1401,13 +2483,26 @@ function renderDetailedMap(plot, scene, layers) {
 function renderHeatmapPreview(scene) {
   const [z1, z2, z3, z4] = scene.zones;
   return `
-    <svg viewBox="0 0 360 220" preserveAspectRatio="none" aria-hidden="true">
+    <svg viewBox="0 0 360 220" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <defs>
+        <radialGradient id="preview-glow" cx="28%" cy="18%" r="72%">
+          <stop offset="0%" stop-color="rgba(146, 214, 118, 0.22)"></stop>
+          <stop offset="100%" stop-color="rgba(146, 214, 118, 0)"></stop>
+        </radialGradient>
+        <radialGradient id="preview-hotspot" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="rgba(255,107,107,0.42)"></stop>
+          <stop offset="100%" stop-color="rgba(255,107,107,0)"></stop>
+        </radialGradient>
+      </defs>
       <rect width="360" height="220" fill="#0a1316"></rect>
-      <path d="M40 40 L290 26 L330 84 L300 184 L78 198 L26 118 Z" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.14)" stroke-width="2"></path>
-      <path d="M58 56 L186 48 L170 112 L44 120 Z" fill="${z1.fill}" stroke="${z1.stroke}" stroke-width="1.6"></path>
-      <path d="M192 50 L278 44 L316 98 L226 114 Z" fill="${z2.fill}" stroke="${z2.stroke}" stroke-width="1.6"></path>
-      <path d="M52 128 L166 120 L154 188 L80 194 L34 154 Z" fill="${z3.fill}" stroke="${z3.stroke}" stroke-width="1.6"></path>
-      <path d="M172 118 L306 102 L290 182 L164 190 Z" fill="${z4.fill}" stroke="${z4.stroke}" stroke-width="1.6"></path>
+      <rect width="360" height="220" fill="url(#preview-glow)"></rect>
+      <rect y="116" width="360" height="104" fill="rgba(3,10,14,0.34)"></rect>
+      <path d="M44 18 L296 8 L338 74 L306 196 L74 204 L30 106 Z" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.14)" stroke-width="2.2"></path>
+      <path d="M62 34 L188 28 L172 106 L48 110 Z" fill="${z1.fill}" stroke="${z1.stroke}" stroke-width="1.8"></path>
+      <path d="M194 28 L284 24 L324 92 L230 110 Z" fill="${z2.fill}" stroke="${z2.stroke}" stroke-width="1.8"></path>
+      <path d="M58 116 L170 112 L154 192 L78 196 L38 142 Z" fill="${z3.fill}" stroke="${z3.stroke}" stroke-width="1.8"></path>
+      <path d="M176 110 L318 94 L300 190 L162 190 Z" fill="${z4.fill}" stroke="${z4.stroke}" stroke-width="1.8"></path>
+      <ellipse cx="${scene.hotspot.x * 3.2}" cy="${scene.hotspot.y * 2.75}" rx="${Math.max(28, scene.hotspot.radius * 1.9)}" ry="${Math.max(18, scene.hotspot.radius * 1.5)}" fill="url(#preview-hotspot)"></ellipse>
       <circle cx="${scene.hotspot.x * 3.2}" cy="${scene.hotspot.y * 2.75}" r="${Math.max(7, scene.hotspot.radius * 0.48)}" fill="rgba(255,107,107,0.58)"></circle>
       <circle cx="${scene.hotspot.x * 3.2}" cy="${scene.hotspot.y * 2.75}" r="7" fill="#ffeaea"></circle>
     </svg>

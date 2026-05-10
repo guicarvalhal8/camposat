@@ -1,0 +1,29 @@
+[
+  {
+    "id": "AG-01",
+    "name": "Marina Costa",
+    "email": "marina@camposat.demo",
+    "passwordHash": "42f821649d64cb5c4ec6390080e1166b$c24195c98dd69174737071bc46af18a9dfe02821b1ec85866e3a24dc9ddea651",
+    "farmName": "Fazenda Aurora",
+    "whatsapp": "+55 65 99971-1221",
+    "createdAt": "2026-05-09 23:09"
+  },
+  {
+    "id": "AG-02",
+    "name": "Rafael Gama",
+    "email": "rafael@camposat.demo",
+    "passwordHash": "38b0bb1863228f4276c173561d52e73d$1e1fd9b7ba011cb7e07fe0425bf42a014b64afe000eb325f0627854c8b9f8a3c",
+    "farmName": "Fazenda Horizonte",
+    "whatsapp": "+55 65 99931-8342",
+    "createdAt": "2026-05-09 23:09"
+  },
+  {
+    "id": "AG-03",
+    "name": "Bianca Salles",
+    "email": "bianca@camposat.demo",
+    "passwordHash": "09c087ce9355e8373441d729993b19a8$ccfdaa5d9295898ef46f9b5dd2e3c3c0a2226bdb975650badcc04259919c35e0",
+    "farmName": "Fazenda Cedro Alto",
+    "whatsapp": "+55 64 99922-1840",
+    "createdAt": "2026-05-09 23:09"
+  }
+]
