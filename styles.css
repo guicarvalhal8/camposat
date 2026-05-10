@@ -804,6 +804,13 @@ optgroup {
   margin-top: 8px;
 }
 
+.metric-help {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+  font-size: 0.86rem;
+}
+
 .metric-delta {
   font-size: 0.92rem;
   margin-top: 4px;

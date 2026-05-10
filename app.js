@@ -898,7 +898,7 @@ function mountLiveMap(route, activePlot) {
       offset: 18,
       className: "plot-popup"
     }).setLngLat(geometry.hotspot.geometry.coordinates)
-      .setHTML(`<strong>${scene.hotspot.label}</strong><span>${scene.affectedAreaHa} ha em risco • NDVI ${scene.ndvi.toFixed(2)}</span>`)
+      .setHTML(`<strong>${scene.hotspot.label}</strong><span>Area em atencao: ${scene.affectedAreaHa} ha</span><span>Saude da lavoura: ${scene.ndvi.toFixed(2)}</span>`)
       .addTo(detailMap);
 
     detailMap.on("mouseenter", "plot-hotspot-core", () => {
@@ -1217,12 +1217,12 @@ function renderTopbar(route, activePlot) {
     const scene = getActiveScene(activePlot);
     current = {
       title: activePlot.name,
-      text: "Mapa detalhado, metadados da cena, clima e historico temporal do talhao."
+      text: "Entenda o que a imagem mais recente mostra sobre a lavoura, o clima e o ponto que merece mais atencao."
     };
     modeLabel = "detalhe";
     primaryKpiLabel = "Status";
     primaryKpiValue = statusLabel(scene.status);
-    secondaryKpiLabel = "NDVI";
+    secondaryKpiLabel = "Saude da lavoura";
     secondaryKpiValue = scene.ndvi.toFixed(2);
   } else if (route.view === "alerts") {
     current = {
@@ -1614,40 +1614,23 @@ function renderDetailView(plot) {
             <span class="eyebrow">Resumo da imagem</span>
             <h3>O que foi visto nesta data</h3>
             <div class="metric-stack" style="margin-top: 18px;">
-              <div class="metric-box">
-                <span class="metric-label">Indice de saude</span>
-                <span class="metric-value">${scene.ndvi.toFixed(2)}</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Mudanca</span>
-                <span class="metric-value">${scene.delta >= 0 ? "+" : ""}${scene.delta.toFixed(2)}</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Area em atencao</span>
-                <span class="metric-value">${scene.affectedAreaHa} ha</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Detalhe da imagem</span>
-                <span class="metric-value">${scene.resolutionM} m</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Imagem anterior</span>
-                <span class="metric-value">${previousScene ? formatDateTime(previousScene.capturedAt) : "Primeira leitura"}</span>
-              </div>
-              <div class="metric-box">
-                <span class="metric-label">Nuvens na imagem</span>
-                <span class="metric-value">${scene.cloudCoverage}%</span>
-              </div>
+              ${renderExplainMetric("Saude da lavoura", scene.ndvi.toFixed(2), describeHealthIndex(scene.ndvi))}
+              ${renderExplainMetric("Mudanca desde a ultima imagem", `${scene.delta >= 0 ? "+" : ""}${scene.delta.toFixed(2)}`, describeDelta(scene.delta))}
+              ${renderExplainMetric("Area que merece atencao", `${scene.affectedAreaHa} ha`, describeRiskArea(scene.affectedAreaHa))}
+              ${renderExplainMetric("Nivel de detalhe da imagem", `${scene.resolutionM} m`, describeResolution(scene.resolutionM))}
+              ${renderExplainMetric("Imagem anterior", previousScene ? formatDateTime(previousScene.capturedAt) : "Primeira leitura", previousScene ? "Serve para comparar se a area melhorou ou piorou." : "Ainda nao existe comparacao anterior para este talhao.")}
+              ${renderExplainMetric("Nuvens na imagem", `${scene.cloudCoverage}%`, describeCloudCoverage(scene.cloudCoverage))}
             </div>
             <p class="metric-copy" style="margin-top: 18px;">${scene.issue}</p>
           </section>
 
           <section class="panel">
             <span class="eyebrow">Historico do talhao</span>
-            <h3>Ultimos alertas e curva NDVI</h3>
+            <h3>Como a lavoura vem evoluindo</h3>
             <div class="sparkline" style="margin-top: 18px;">
               ${renderSparkline(plot.snapshots.map((item) => item.ndvi), scene.status, `${plot.id}-detail`)}
             </div>
+            <p class="metric-copy" style="margin-top: 14px;">A linha mostra se a saude da lavoura esta melhorando, piorando ou ficando estavel nas ultimas imagens.</p>
             <div class="history-list" style="margin-top: 16px;">
               ${plot.alerts.length ? plot.alerts.slice(0, 3).map(renderPlotAlert).join("") : `<div class="history-item"><div class="history-copy"><strong>Sem alertas recentes</strong><p>O talhao segue sem anomalia acima do limiar.</p></div><div class="history-meta">Sem disparo</div></div>`}
             </div>
@@ -1660,22 +1643,10 @@ function renderDetailView(plot) {
           <span class="eyebrow">Clima da ultima leitura</span>
           <h3>Condições do talhao</h3>
           <div class="weather-grid" style="margin-top: 18px;">
-            <div class="metric-box">
-              <span class="metric-label">Temperatura</span>
-              <span class="metric-value">${scene.weather.tempC}C</span>
-            </div>
-            <div class="metric-box">
-              <span class="metric-label">Chuva</span>
-              <span class="metric-value">${scene.weather.rainMm} mm</span>
-            </div>
-            <div class="metric-box">
-              <span class="metric-label">Umidade</span>
-              <span class="metric-value">${scene.weather.humidity}%</span>
-            </div>
-            <div class="metric-box">
-              <span class="metric-label">Vento</span>
-              <span class="metric-value">${scene.weather.windKmh} km/h</span>
-            </div>
+            ${renderExplainMetric("Temperatura", `${scene.weather.tempC}C`, describeTemperature(scene.weather.tempC))}
+            ${renderExplainMetric("Chuva recente", `${scene.weather.rainMm} mm`, describeRain(scene.weather.rainMm))}
+            ${renderExplainMetric("Umidade do ar", `${scene.weather.humidity}%`, describeHumidity(scene.weather.humidity))}
+            ${renderExplainMetric("Vento", `${scene.weather.windKmh} km/h`, describeWind(scene.weather.windKmh))}
           </div>
         </section>
 
@@ -1689,9 +1660,9 @@ function renderDetailView(plot) {
 
         <section class="panel">
           <span class="eyebrow">Acao recomendada</span>
-          <h3>Proximo passo operacional</h3>
+          <h3>O que fazer agora</h3>
           <div class="big-number">${scene.affectedAreaHa} ha</div>
-          <p class="metric-copy">Responsavel: ${plot.agronomist}. Numero para contato: ${plot.whatsapp}. Priorize a vistoria no hotspot indicado pela cena selecionada.</p>
+          <p class="metric-copy">${buildActionSummary(plot, scene)}</p>
           <div class="panel-actions" style="margin-top: 18px;">
             <button class="button" type="button" data-action="analyze" data-id="${plot.id}">Atualizar leitura</button>
           </div>
@@ -1706,16 +1677,16 @@ function renderDetailView(plot) {
                 <div class="tiny">${plot.agronomist}</div>
               </div>
             </div>
-            <span class="ghost-tag">${severityFromStatus(scene.status).toLowerCase()}</span>
+            <span class="ghost-tag">${severityPhrase(scene.status)}</span>
           </div>
           <div class="message-stack">
             <div class="message system">
-              CampoSat detectou anomalia no talhao ${plot.name}.
-              <small>${scene.capturedAt}</small>
+              O CampoSat encontrou um ponto de atencao no talhao ${plot.name}.
+              <small>${formatDateTime(scene.capturedAt)}</small>
             </div>
             <div class="message outbound">
-              NDVI ${scene.ndvi.toFixed(2)}, area afetada ${scene.affectedAreaHa} ha, nuvem ${scene.cloudCoverage}%, coordenadas ${plot.coordinatesText}. Priorizar vistoria no hotspot ${scene.hotspot.label}.
-              <small>Template pronto para integracao via WhatsApp API</small>
+              A imagem mais recente mostra ${describeHealthIndex(scene.ndvi).toLowerCase()} e indica ${scene.affectedAreaHa} ha com necessidade de olhar mais de perto. O ponto principal fica em ${scene.hotspot.label} e o contato responsavel e ${plot.whatsapp}.
+              <small>Texto pronto para virar mensagem automatica.</small>
             </div>
           </div>
         </section>
@@ -3047,6 +3018,89 @@ function formatCurrency(value) {
 
 function formatSigned(value) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function renderExplainMetric(label, value, description) {
+  return `
+    <div class="metric-box">
+      <span class="metric-label">${label}</span>
+      <span class="metric-value">${value}</span>
+      <p class="metric-help">${description}</p>
+    </div>
+  `;
+}
+
+function describeHealthIndex(value) {
+  if (value >= 0.75) return "A lavoura aparece forte e com bom desenvolvimento.";
+  if (value >= 0.6) return "A lavoura segue bem, mas vale acompanhar os proximos dias.";
+  if (value >= 0.5) return "Ha sinais de enfraquecimento em parte da area.";
+  return "A lavoura mostra sinais claros de estresse e precisa de vistoria.";
+}
+
+function describeDelta(value) {
+  if (value >= 0.04) return "Melhorou bem em comparacao com a imagem anterior.";
+  if (value > 0) return "Melhorou um pouco desde a ultima imagem.";
+  if (value === 0) return "Ficou estavel em comparacao com a leitura anterior.";
+  if (value <= -0.04) return "Piorou de forma clara desde a ultima imagem.";
+  return "Piorou um pouco desde a ultima imagem.";
+}
+
+function describeRiskArea(value) {
+  if (value <= 0) return "Nao ha area pedindo atencao neste momento.";
+  if (value <= 3) return "A area em observacao ainda e pequena.";
+  if (value <= 10) return "Existe uma faixa relevante que merece vistoria.";
+  return "A area em alerta ja e grande e pede prioridade.";
+}
+
+function describeResolution(value) {
+  if (value <= 10) return "A imagem tem bom nivel de detalhe para localizar o problema.";
+  if (value <= 20) return "A imagem ajuda bem na leitura geral do talhao.";
+  return "A imagem serve mais para visao geral do que para detalhe fino.";
+}
+
+function describeCloudCoverage(value) {
+  if (value <= 10) return "Quase sem nuvens, leitura bem confiavel.";
+  if (value <= 25) return "Poucas nuvens, leitura ainda confiavel.";
+  if (value <= 45) return "As nuvens ja podem esconder parte da area.";
+  return "Muitas nuvens podem atrapalhar a leitura desta imagem.";
+}
+
+function describeTemperature(value) {
+  if (value <= 20) return "Temperatura mais amena no momento da leitura.";
+  if (value <= 28) return "Temperatura dentro de uma faixa comum para o campo.";
+  return "Temperatura alta, vale cruzar com umidade e chuva.";
+}
+
+function describeRain(value) {
+  if (value <= 2) return "Choveu pouco ou quase nada recentemente.";
+  if (value <= 10) return "Houve chuva leve nos ultimos dias.";
+  if (value <= 25) return "A chuva recente pode ter ajudado a lavoura.";
+  return "Foi um periodo bem chuvoso para a area.";
+}
+
+function describeHumidity(value) {
+  if (value <= 45) return "O ar estava mais seco durante a leitura.";
+  if (value <= 70) return "Umidade em nivel intermediario.";
+  return "O ar estava bem umido no momento da leitura.";
+}
+
+function describeWind(value) {
+  if (value <= 8) return "Vento fraco, sem grande influencia aparente.";
+  if (value <= 18) return "Vento moderado durante a leitura.";
+  return "Vento mais forte, vale considerar no contexto da vistoria.";
+}
+
+function buildActionSummary(plot, scene) {
+  if (scene.affectedAreaHa <= 0) {
+    return `Responsavel: ${plot.agronomist}. No momento nao ha area critica, mas vale manter o acompanhamento regular pelo numero ${plot.whatsapp}.`;
+  }
+  return `Responsavel: ${plot.agronomist}. Entre em contato pelo numero ${plot.whatsapp} e priorize a vistoria em ${scene.affectedAreaHa} ha, principalmente no ponto ${scene.hotspot.label}.`;
+}
+
+function severityPhrase(status) {
+  if (status === "green") return "situacao tranquila";
+  if (status === "yellow") return "pedindo atencao";
+  return "precisa agir";
 }
 
 function formatDateTime(value) {
