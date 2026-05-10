@@ -60,6 +60,7 @@ const state = {
 let memoryOfflineState = null;
 let detailMap = null;
 let formMap = null;
+let formMarkers = [];
 
 const app = document.getElementById("app");
 
@@ -745,6 +746,8 @@ function teardownMaps() {
     detailMap.remove();
     detailMap = null;
   }
+  formMarkers.forEach((marker) => marker.remove());
+  formMarkers = [];
   if (formMap) {
     formMap.remove();
     formMap = null;
@@ -986,6 +989,8 @@ function mountFormMap(route) {
 
 function updateFormMapLayers() {
   if (!formMap || !formMap.isStyleLoaded()) return;
+  formMarkers.forEach((marker) => marker.remove());
+  formMarkers = [];
   const geometry = getDrawnGeometry();
   const points = state.form.points.map((coordinate, index) => ({
     type: "Feature",
@@ -1066,6 +1071,33 @@ function updateFormMapLayers() {
       maxZoom: 17
     });
   }
+
+  state.form.points.forEach((coordinate, index) => {
+    const element = document.createElement("button");
+    element.type = "button";
+    element.className = "geometry-point-marker";
+    element.textContent = String(index + 1);
+    element.setAttribute("aria-label", `Ponto ${index + 1} do talhao`);
+
+    const marker = new window.maplibregl.Marker({
+      element,
+      draggable: true
+    })
+      .setLngLat(coordinate)
+      .addTo(formMap);
+
+    marker.on("dragend", () => {
+      const lngLat = marker.getLngLat();
+      state.form.points[index] = [Number(lngLat.lng.toFixed(6)), Number(lngLat.lat.toFixed(6))];
+      const nextGeometry = getDrawnGeometry();
+      if (nextGeometry) {
+        syncDraftCenterFromGeometry(nextGeometry);
+      }
+      render();
+    });
+
+    formMarkers.push(marker);
+  });
 }
 
 function getRoute() {
@@ -1985,8 +2017,8 @@ function renderFormView() {
 
             <div class="segmented-row geometry-mode-row">
               ${renderGeometryModeButton("auto", "Gerar automaticamente", "Usa centro e hectares para criar um contorno inicial.", state.form.geometryMode)}
-              ${renderGeometryModeButton("draw", "Desenhar no mapa", "Voce clica nos pontos do talhao direto no mapa.", state.form.geometryMode)}
-              ${renderGeometryModeButton("import", "Importar GeoJSON", "Cole o contorno real em formato GeoJSON.", state.form.geometryMode)}
+              ${renderGeometryModeButton("draw", "Desenhar no mapa", "Voce marca e depois ajusta os pontos do talhao direto no mapa.", state.form.geometryMode)}
+              ${renderGeometryModeButton("import", "Importar arquivo", "Cole o contorno real em GeoJSON ou KML.", state.form.geometryMode)}
             </div>
 
             ${state.form.geometryMode === "draw" ? `
@@ -2002,16 +2034,16 @@ function renderFormView() {
                     <button class="button-secondary" type="button" data-action="undo-geometry-point">Desfazer ultimo ponto</button>
                     <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
                   </div>
-                  <p class="tiny">Dica: clique ao redor da borda do talhao. Com 3 pontos ou mais o contorno ja pode ser salvo.</p>
+                  <p class="tiny">Dica: clique ao redor da borda do talhao. Depois disso, arraste os pontos para alinhar melhor o contorno com a imagem.</p>
                 </div>
               </div>
             ` : ""}
 
             ${state.form.geometryMode === "import" ? `
               <div class="field-group full">
-                <label for="plot-geometry-text">GeoJSON do talhao</label>
-                <textarea id="plot-geometry-text" name="geometryText" placeholder='Cole aqui um Polygon, Feature ou FeatureCollection em GeoJSON.'>${escapeHtml(state.form.importText)}</textarea>
-                <p class="tiny">Aceita Polygon, Feature ou FeatureCollection. O sistema pega o primeiro poligono valido.</p>
+                <label for="plot-geometry-text">GeoJSON ou KML do talhao</label>
+                <textarea id="plot-geometry-text" name="geometryText" placeholder='Cole aqui um Polygon em GeoJSON, um Feature/FeatureCollection ou um KML com Polygon.'>${escapeHtml(state.form.importText)}</textarea>
+                <p class="tiny">Aceita Polygon, Feature, FeatureCollection e tambem KML com Polygon. O sistema usa o primeiro poligono valido encontrado.</p>
               </div>
             ` : ""}
 
@@ -2123,6 +2155,34 @@ function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getAc
   state.form.mapZoom = 4.4;
 }
 
+function parseKmlCoordinates(text) {
+  const entries = String(text || "")
+    .trim()
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const ring = entries
+    .map((entry) => entry.split(",").map((value) => Number(value)))
+    .filter((parts) => parts.length >= 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1]))
+    .map((parts) => [parts[0], parts[1]]);
+  return ring.length >= 3 ? ring : null;
+}
+
+function parseKmlGeometry(text) {
+  const source = String(text || "");
+  if (!source.trim()) return null;
+  const polygonMatch = source.match(/<outerBoundaryIs[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/i)
+    || source.match(/<Polygon[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/i)
+    || source.match(/<LinearRing[\s\S]*?<coordinates>([\s\S]*?)<\/coordinates>/i);
+  if (!polygonMatch) return null;
+  const ring = parseKmlCoordinates(polygonMatch[1]);
+  if (!ring) return null;
+  return {
+    type: "Polygon",
+    coordinates: [closeRing(ring)]
+  };
+}
+
 function closeRing(points) {
   if (!points.length) return [];
   const ring = points.map((point) => [Number(point[0]), Number(point[1])]);
@@ -2165,9 +2225,13 @@ function extractPolygonGeometry(value) {
 }
 
 function parseImportedGeometry(text) {
-  if (!String(text || "").trim()) return null;
+  const source = String(text || "").trim();
+  if (!source) return null;
+  if (source.startsWith("<")) {
+    return parseKmlGeometry(source);
+  }
   try {
-    return extractPolygonGeometry(JSON.parse(text));
+    return extractPolygonGeometry(JSON.parse(source));
   } catch (error) {
     return null;
   }
@@ -2211,10 +2275,10 @@ function getDraftGeometrySummary(geometry) {
     if (state.form.points.length < 3) {
       return "Marque pelo menos 3 pontos para fechar o contorno da area.";
     }
-    return "Contorno pronto para salvar usando os pontos clicados no mapa.";
+    return "Contorno pronto. Se quiser, arraste os pontos no mapa para ajustar melhor a borda.";
   }
   if (state.form.geometryMode === "import") {
-    return geometry ? "GeoJSON valido carregado para este talhao." : "Cole um GeoJSON valido para usar o formato real da area.";
+    return geometry ? "Arquivo valido carregado para este talhao." : "Cole um GeoJSON ou KML valido para usar o formato real da area.";
   }
   return "Sem contorno manual. O sistema vai gerar um formato inicial automaticamente.";
 }

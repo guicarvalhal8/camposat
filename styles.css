@@ -1049,6 +1049,24 @@ optgroup {
   background: #08131a;
 }
 
+.geometry-point-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 2px solid #031219;
+  background: linear-gradient(135deg, #67f1c9, #89e9ff);
+  color: #031219;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+  cursor: grab;
+}
+
+.geometry-point-marker:active {
+  cursor: grabbing;
+}
+
 .geometry-draw-meta {
   display: flex;
   flex-direction: column;
