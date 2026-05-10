@@ -1519,6 +1519,9 @@ function renderDetailView(plot) {
   const layers = getLayers(plot.id);
   const previousScene = sceneIndex > 0 ? plot.snapshots[sceneIndex - 1] : null;
   const liveMapReady = typeof window.maplibregl !== "undefined";
+  const portfolioPlots = getPortfolioPlots()
+    .slice()
+    .sort((left, right) => `${left.farmName} ${left.name}`.localeCompare(`${right.farmName} ${right.name}`, "pt-BR"));
 
   return `
     <div class="detail-layout">
@@ -1533,6 +1536,24 @@ function renderDetailView(plot) {
             <span class="chip"><strong>${plot.crop}</strong> • ${plot.hectares} ha</span>
             <span class="chip"><strong>Ultima imagem:</strong> ${formatDateTime(scene.capturedAt)}</span>
           </div>
+        </div>
+
+        <div class="detail-picker-shell">
+          <label class="toolbar-field detail-picker">
+            <span>Escolha a area que voce quer ver no satelite</span>
+            <select name="detailPlotId">
+              ${portfolioPlots
+                .map(
+                  (item) => `
+                    <option value="${item.id}" ${item.id === plot.id ? "selected" : ""}>
+                      ${item.farmName} - ${item.name}
+                    </option>
+                  `
+                )
+                .join("")}
+            </select>
+          </label>
+          <p class="tiny detail-picker-copy">Troque de fazenda ou de talhao sem sair desta tela.</p>
         </div>
 
         <div class="map-toolbar">
@@ -2020,6 +2041,12 @@ async function handleClick(event) {
 
 function handleChange(event) {
   const { name, value } = event.target;
+  if (name === "detailPlotId") {
+    if (value) {
+      window.location.hash = `#/talhao/${value}`;
+    }
+    return;
+  }
   if (!(name in state.filters)) return;
   state.filters[name] = value;
   render();
