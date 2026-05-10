@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 import secrets
-import shutil
+import sqlite3
 from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -16,8 +16,7 @@ from urllib.parse import parse_qs, urlparse
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 SEED_PATH = DATA_DIR / "seed_state.json"
-STATE_PATH = DATA_DIR / "state.json"
-USERS_PATH = DATA_DIR / "users.json"
+DB_PATH = DATA_DIR / "camposat.db"
 SESSION_COOKIE_NAME = "camposat_session"
 SESSIONS = {}
 
@@ -45,6 +44,14 @@ AUTH_SEED_USERS = [
         "password": "camposat123",
         "farmName": "Fazenda Cedro Alto",
         "whatsapp": "+55 64 99922-1840",
+    },
+    {
+        "id": "AG-04",
+        "name": "Ana Luiza Prado",
+        "email": "ana@camposat.demo",
+        "password": "camposat123",
+        "farmName": "Fazenda Santa Helena",
+        "whatsapp": "+55 66 99912-4508",
     },
 ]
 
@@ -83,6 +90,10 @@ def public_user(user):
     }
 
 
+def load_seed_state():
+    return json.loads(SEED_PATH.read_text(encoding="utf-8"))
+
+
 def build_user_seed():
     created_at = now_label()
     return [
@@ -99,35 +110,307 @@ def build_user_seed():
     ]
 
 
-def ensure_data_files():
+def open_db():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not STATE_PATH.exists():
-        shutil.copyfile(SEED_PATH, STATE_PATH)
-    if not USERS_PATH.exists():
-        USERS_PATH.write_text(json.dumps(build_user_seed(), ensure_ascii=False, indent=2), encoding="utf-8")
+    connection = sqlite3.connect(DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
 
 
-def load_seed_state():
-    return json.loads(SEED_PATH.read_text(encoding="utf-8"))
+def init_db():
+    with open_db() as connection:
+        connection.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                farm_name TEXT DEFAULT '',
+                whatsapp TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS plots (
+                id TEXT PRIMARY KEY,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                farm_name TEXT NOT NULL,
+                crop TEXT NOT NULL,
+                hectares INTEGER NOT NULL,
+                municipality TEXT NOT NULL,
+                center_lat REAL NOT NULL,
+                center_lon REAL NOT NULL,
+                coordinates_text TEXT NOT NULL,
+                agronomist TEXT NOT NULL,
+                whatsapp TEXT DEFAULT '',
+                notes TEXT DEFAULT '',
+                snapshots_json TEXT NOT NULL,
+                alerts_json TEXT NOT NULL,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS alerts (
+                id TEXT PRIMARY KEY,
+                plot_id TEXT NOT NULL,
+                plot_name TEXT NOT NULL,
+                when_label TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                sent INTEGER NOT NULL,
+                summary TEXT NOT NULL,
+                snapshot_id TEXT NOT NULL,
+                FOREIGN KEY(plot_id) REFERENCES plots(id)
+            );
+            """
+        )
+
+        user_count = connection.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        plot_count = connection.execute("SELECT COUNT(*) FROM plots").fetchone()[0]
+        if user_count == 0 and plot_count == 0:
+            seed_database(connection)
 
 
-def load_state():
-    ensure_data_files()
-    return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+def set_meta(connection, key, value):
+    connection.execute(
+        """
+        INSERT INTO meta(key, value)
+        VALUES(?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        """,
+        (key, str(value)),
+    )
 
 
-def save_state(state):
-    state["meta"]["lastUpdated"] = now_label()
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+def get_meta(connection, key, default=""):
+    row = connection.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
 
 
-def load_users():
-    ensure_data_files()
-    return json.loads(USERS_PATH.read_text(encoding="utf-8"))
+def touch_last_updated(connection):
+    set_meta(connection, "lastUpdated", now_label())
 
 
-def save_users(users):
-    USERS_PATH.write_text(json.dumps(users, ensure_ascii=False, indent=2), encoding="utf-8")
+def seed_database(connection):
+    seed_state = load_seed_state()
+    users = build_user_seed()
+    owner_by_name = {user["name"]: user["id"] for user in users}
+
+    connection.execute("DELETE FROM alerts")
+    connection.execute("DELETE FROM plots")
+    connection.execute("DELETE FROM users")
+    connection.execute("DELETE FROM meta")
+
+    for user in users:
+        connection.execute(
+            """
+            INSERT INTO users(id, name, email, password_hash, farm_name, whatsapp, created_at)
+            VALUES(?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user["id"],
+                user["name"],
+                user["email"],
+                user["passwordHash"],
+                user["farmName"],
+                user["whatsapp"],
+                user["createdAt"],
+            ),
+        )
+
+    for plot in seed_state["plots"]:
+        owner_user_id = owner_by_name.get(plot.get("agronomist"))
+        center = plot.get("center") or {"lat": 0, "lon": 0}
+        connection.execute(
+            """
+            INSERT INTO plots(
+                id, owner_user_id, name, farm_name, crop, hectares, municipality,
+                center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
+                snapshots_json, alerts_json
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                plot["id"],
+                owner_user_id,
+                plot["name"],
+                plot["farmName"],
+                plot["crop"],
+                int(plot["hectares"]),
+                plot["municipality"],
+                float(center["lat"]),
+                float(center["lon"]),
+                plot["coordinatesText"],
+                plot["agronomist"],
+                plot.get("whatsapp", ""),
+                plot.get("notes", ""),
+                json.dumps(plot["snapshots"], ensure_ascii=False),
+                json.dumps(plot.get("alerts", []), ensure_ascii=False),
+            ),
+        )
+
+    for alert in seed_state["alerts"]:
+        connection.execute(
+            """
+            INSERT INTO alerts(id, plot_id, plot_name, when_label, severity, sent, summary, snapshot_id)
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                alert["id"],
+                alert["plotId"],
+                alert["plotName"],
+                alert["when"],
+                alert["severity"],
+                1 if alert["sent"] else 0,
+                alert["summary"],
+                alert["snapshotId"],
+            ),
+        )
+
+    set_meta(connection, "lastUpdated", seed_state["meta"]["lastUpdated"])
+    set_meta(connection, "version", seed_state["meta"]["version"])
+    connection.commit()
+
+
+def seed_market_snapshot():
+    return load_seed_state()["market"]
+
+
+def seed_providers():
+    return load_seed_state()["providers"]
+
+
+def next_plot_id(connection):
+    rows = connection.execute("SELECT id FROM plots").fetchall()
+    ids = [int(row["id"].split("-")[1]) for row in rows]
+    return f"TL-{max(ids, default=0) + 1:02d}"
+
+
+def next_alert_id(connection):
+    rows = connection.execute("SELECT id FROM alerts").fetchall()
+    ids = [int(row["id"].split("-")[1]) for row in rows]
+    return f"AL-{max(ids, default=3157) + 1}"
+
+
+def next_user_id(connection):
+    rows = connection.execute("SELECT id FROM users").fetchall()
+    ids = [int(row["id"].split("-")[1]) for row in rows]
+    return f"AG-{max(ids, default=0) + 1:02d}"
+
+
+def row_to_user(row):
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "email": row["email"],
+        "passwordHash": row["password_hash"],
+        "farmName": row["farm_name"],
+        "whatsapp": row["whatsapp"],
+        "createdAt": row["created_at"],
+    }
+
+
+def row_to_plot(row):
+    return {
+        "id": row["id"],
+        "ownerUserId": row["owner_user_id"],
+        "name": row["name"],
+        "farmName": row["farm_name"],
+        "crop": row["crop"],
+        "hectares": row["hectares"],
+        "municipality": row["municipality"],
+        "center": {"lat": row["center_lat"], "lon": row["center_lon"]},
+        "coordinatesText": row["coordinates_text"],
+        "agronomist": row["agronomist"],
+        "whatsapp": row["whatsapp"],
+        "notes": row["notes"],
+        "snapshots": json.loads(row["snapshots_json"]),
+        "alerts": json.loads(row["alerts_json"]),
+    }
+
+
+def row_to_alert(row):
+    return {
+        "id": row["id"],
+        "plotId": row["plot_id"],
+        "plotName": row["plot_name"],
+        "when": row["when_label"],
+        "severity": row["severity"],
+        "sent": bool(row["sent"]),
+        "summary": row["summary"],
+        "snapshotId": row["snapshot_id"],
+    }
+
+
+def fetch_user_by_id(connection, user_id):
+    row = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    return row_to_user(row) if row else None
+
+
+def fetch_user_by_email(connection, email):
+    row = connection.execute("SELECT * FROM users WHERE email = ?", (normalize_email(email),)).fetchone()
+    return row_to_user(row) if row else None
+
+
+def fetch_plot_by_id(connection, plot_id):
+    row = connection.execute("SELECT * FROM plots WHERE id = ?", (plot_id,)).fetchone()
+    return row_to_plot(row) if row else None
+
+
+def fetch_portfolio_plots(connection, user_id):
+    rows = connection.execute(
+        "SELECT * FROM plots WHERE owner_user_id = ? ORDER BY id ASC",
+        (user_id,),
+    ).fetchall()
+    return [row_to_plot(row) for row in rows]
+
+
+def fetch_portfolio_alerts(connection, user_id):
+    rows = connection.execute(
+        """
+        SELECT alerts.*
+        FROM alerts
+        INNER JOIN plots ON plots.id = alerts.plot_id
+        WHERE plots.owner_user_id = ?
+        ORDER BY alerts.when_label DESC, alerts.id DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [row_to_alert(row) for row in rows]
+
+
+def save_plot(connection, plot):
+    center = plot["center"]
+    connection.execute(
+        """
+        UPDATE plots
+        SET owner_user_id = ?, name = ?, farm_name = ?, crop = ?, hectares = ?, municipality = ?,
+            center_lat = ?, center_lon = ?, coordinates_text = ?, agronomist = ?, whatsapp = ?, notes = ?,
+            snapshots_json = ?, alerts_json = ?
+        WHERE id = ?
+        """,
+        (
+            plot["ownerUserId"],
+            plot["name"],
+            plot["farmName"],
+            plot["crop"],
+            int(plot["hectares"]),
+            plot["municipality"],
+            float(center["lat"]),
+            float(center["lon"]),
+            plot["coordinatesText"],
+            plot["agronomist"],
+            plot.get("whatsapp", ""),
+            plot.get("notes", ""),
+            json.dumps(plot["snapshots"], ensure_ascii=False),
+            json.dumps(plot.get("alerts", []), ensure_ascii=False),
+            plot["id"],
+        ),
+    )
 
 
 class MockWeatherProvider:
@@ -221,32 +504,6 @@ class ProviderRegistry:
 REGISTRY = ProviderRegistry()
 
 
-def ensure_plot_ownership(state, users):
-    changed = False
-    owner_by_name = {user["name"]: user["id"] for user in users}
-    for plot in state["plots"]:
-        owner_id = owner_by_name.get(plot.get("agronomist"))
-        if owner_id and plot.get("ownerUserId") != owner_id:
-            plot["ownerUserId"] = owner_id
-            changed = True
-    return changed
-
-
-def next_plot_id(state):
-    ids = [int(plot["id"].split("-")[1]) for plot in state["plots"]]
-    return f"TL-{max(ids, default=0) + 1:02d}"
-
-
-def next_alert_id(state):
-    ids = [int(alert["id"].split("-")[1]) for alert in state["alerts"]]
-    return f"AL-{max(ids, default=3157) + 1}"
-
-
-def next_user_id(users):
-    ids = [int(user["id"].split("-")[1]) for user in users]
-    return f"AG-{max(ids, default=0) + 1:02d}"
-
-
 def severity_from_status(status):
     if status == "red":
         return "Alta"
@@ -255,12 +512,26 @@ def severity_from_status(status):
     return "Baixa"
 
 
-def append_alert_if_needed(state, plot, snapshot):
+def portfolio_payload(connection, user):
+    return {
+        "meta": {
+            "lastUpdated": get_meta(connection, "lastUpdated", now_label()),
+            "version": int(get_meta(connection, "version", "1")),
+        },
+        "providers": seed_providers(),
+        "market": REGISTRY.market.snapshot(seed_market_snapshot()),
+        "plots": fetch_portfolio_plots(connection, user["id"]),
+        "alerts": fetch_portfolio_alerts(connection, user["id"]),
+        "auth": {"user": public_user(user)},
+    }
+
+
+def append_alert_if_needed(connection, plot, snapshot):
     severity = severity_from_status(snapshot["status"])
     if severity == "Baixa":
         return None
 
-    alert_id = next_alert_id(state)
+    alert_id = next_alert_id(connection)
     sent = REGISTRY.whatsapp.dispatch(severity)
     if severity == "Alta":
         summary = f"Queda adicional para NDVI {snapshot['ndvi']:.2f}. Revisar {snapshot['affectedAreaHa']} ha com urgencia."
@@ -288,26 +559,27 @@ def append_alert_if_needed(state, plot, snapshot):
             "snapshotId": snapshot["id"],
         },
     )
-    state["alerts"].insert(0, alert)
+    connection.execute(
+        """
+        INSERT INTO alerts(id, plot_id, plot_name, when_label, severity, sent, summary, snapshot_id)
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            alert["id"],
+            alert["plotId"],
+            alert["plotName"],
+            alert["when"],
+            alert["severity"],
+            1 if alert["sent"] else 0,
+            alert["summary"],
+            alert["snapshotId"],
+        ),
+    )
     return alert
 
 
-def portfolio_payload(state, user):
-    plot_list = [copy.deepcopy(plot) for plot in state["plots"] if plot.get("ownerUserId") == user["id"]]
-    plot_ids = {plot["id"] for plot in plot_list}
-    alerts = [copy.deepcopy(alert) for alert in state["alerts"] if alert["plotId"] in plot_ids]
-    return {
-        "meta": copy.deepcopy(state["meta"]),
-        "providers": copy.deepcopy(state["providers"]),
-        "market": REGISTRY.market.snapshot(state["market"]),
-        "plots": plot_list,
-        "alerts": alerts,
-        "auth": {"user": public_user(user)},
-    }
-
-
-def create_plot(state, payload, user):
-    plot_id = next_plot_id(state)
+def create_plot(connection, payload, user):
+    plot_id = next_plot_id(connection)
     crop = payload.get("crop", "Soja")
     center = {
         "lat": float(payload.get("lat", 0)),
@@ -354,21 +626,56 @@ def create_plot(state, payload, user):
         ],
         "alerts": [],
     }
-    state["plots"].insert(0, plot)
+
+    connection.execute(
+        """
+        INSERT INTO plots(
+            id, owner_user_id, name, farm_name, crop, hectares, municipality,
+            center_lat, center_lon, coordinates_text, agronomist, whatsapp, notes,
+            snapshots_json, alerts_json
+        )
+        VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            plot["id"],
+            plot["ownerUserId"],
+            plot["name"],
+            plot["farmName"],
+            plot["crop"],
+            plot["hectares"],
+            plot["municipality"],
+            plot["center"]["lat"],
+            plot["center"]["lon"],
+            plot["coordinatesText"],
+            plot["agronomist"],
+            plot["whatsapp"],
+            plot["notes"],
+            json.dumps(plot["snapshots"], ensure_ascii=False),
+            json.dumps(plot["alerts"], ensure_ascii=False),
+        ),
+    )
+    touch_last_updated(connection)
+    connection.commit()
     return plot
 
 
-def get_owned_plot(state, user, plot_id):
-    return next((item for item in state["plots"] if item["id"] == plot_id and item.get("ownerUserId") == user["id"]), None)
+def get_owned_plot(connection, user, plot_id):
+    plot = fetch_plot_by_id(connection, plot_id)
+    if not plot or plot.get("ownerUserId") != user["id"]:
+        return None
+    return plot
 
 
-def analyze_plot(state, user, plot_id):
-    plot = get_owned_plot(state, user, plot_id)
+def analyze_plot(connection, user, plot_id):
+    plot = get_owned_plot(connection, user, plot_id)
     if not plot:
         return None, None
     snapshot = REGISTRY.satellite.analyze_plot(plot)
     plot["snapshots"].append(snapshot)
-    alert = append_alert_if_needed(state, plot, snapshot)
+    alert = append_alert_if_needed(connection, plot, snapshot)
+    save_plot(connection, plot)
+    touch_last_updated(connection)
+    connection.commit()
     return plot, alert
 
 
@@ -402,8 +709,8 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
         user_id = SESSIONS.get(session_id)
         if not user_id:
             return None
-        users = load_users()
-        return next((user for user in users if user["id"] == user_id), None)
+        with open_db() as connection:
+            return fetch_user_by_id(connection, user_id)
 
     def require_user(self):
         user = self.current_user()
@@ -430,23 +737,19 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             user = self.require_user()
             if not user:
                 return
-            users = load_users()
-            state = load_state()
-            if ensure_plot_ownership(state, users):
-                save_state(state)
-            self.send_json(portfolio_payload(state, user))
+            with open_db() as connection:
+                self.send_json(portfolio_payload(connection, user))
             return
 
         if parsed.path == "/api/alerts":
             user = self.require_user()
             if not user:
                 return
-            state = load_state()
-            plot_ids = {plot["id"] for plot in state["plots"] if plot.get("ownerUserId") == user["id"]}
+            with open_db() as connection:
+                alerts = fetch_portfolio_alerts(connection, user["id"])
             query = parse_qs(parsed.query)
             q = query.get("q", [""])[0].strip().lower()
             severity = query.get("severity", ["all"])[0]
-            alerts = [alert for alert in state["alerts"] if alert["plotId"] in plot_ids]
             if q:
                 alerts = [
                     alert
@@ -467,10 +770,9 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
         payload = self.parse_body()
 
         if parsed.path == "/api/auth/login":
-            users = load_users()
-            email = normalize_email(payload.get("email"))
+            with open_db() as connection:
+                user = fetch_user_by_email(connection, payload.get("email"))
             password = str(payload.get("password") or "")
-            user = next((item for item in users if normalize_email(item["email"]) == email), None)
             if not user or not verify_password(user["passwordHash"], password):
                 self.send_json({"error": "E-mail ou senha invalidos."}, status=HTTPStatus.UNAUTHORIZED)
                 return
@@ -483,7 +785,6 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/auth/register":
-            users = load_users()
             name = str(payload.get("name") or "").strip()
             email = normalize_email(payload.get("email"))
             password = str(payload.get("password") or "")
@@ -496,21 +797,38 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             if len(password) < 6:
                 self.send_json({"error": "A senha precisa ter pelo menos 6 caracteres."}, status=HTTPStatus.BAD_REQUEST)
                 return
-            if any(normalize_email(user["email"]) == email for user in users):
-                self.send_json({"error": "Ja existe uma conta cadastrada com esse e-mail."}, status=HTTPStatus.CONFLICT)
-                return
 
-            user = {
-                "id": next_user_id(users),
-                "name": name,
-                "email": email,
-                "passwordHash": hash_password(password),
-                "farmName": farm_name,
-                "whatsapp": whatsapp,
-                "createdAt": now_label(),
-            }
-            users.append(user)
-            save_users(users)
+            with open_db() as connection:
+                if fetch_user_by_email(connection, email):
+                    self.send_json({"error": "Ja existe uma conta cadastrada com esse e-mail."}, status=HTTPStatus.CONFLICT)
+                    return
+
+                user = {
+                    "id": next_user_id(connection),
+                    "name": name,
+                    "email": email,
+                    "passwordHash": hash_password(password),
+                    "farmName": farm_name,
+                    "whatsapp": whatsapp,
+                    "createdAt": now_label(),
+                }
+                connection.execute(
+                    """
+                    INSERT INTO users(id, name, email, password_hash, farm_name, whatsapp, created_at)
+                    VALUES(?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user["id"],
+                        user["name"],
+                        user["email"],
+                        user["passwordHash"],
+                        user["farmName"],
+                        user["whatsapp"],
+                        user["createdAt"],
+                    ),
+                )
+                connection.commit()
+
             session_id = secrets.token_urlsafe(32)
             SESSIONS[session_id] = user["id"]
             self.send_json(
@@ -534,51 +852,37 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             return
 
         if parsed.path == "/api/plots":
-            users = load_users()
-            state = load_state()
-            if ensure_plot_ownership(state, users):
-                save_state(state)
-            plot = create_plot(state, payload, user)
-            save_state(state)
+            with open_db() as connection:
+                plot = create_plot(connection, payload, user)
             self.send_json({"plot": plot}, status=HTTPStatus.CREATED)
             return
 
         if parsed.path == "/api/analyze":
-            users = load_users()
-            state = load_state()
-            if ensure_plot_ownership(state, users):
-                save_state(state)
-            plot, alert = analyze_plot(state, user, payload.get("plotId"))
+            with open_db() as connection:
+                plot, alert = analyze_plot(connection, user, payload.get("plotId"))
             if not plot:
                 self.send_json({"error": "Talhao nao encontrado."}, status=HTTPStatus.NOT_FOUND)
                 return
-            save_state(state)
             self.send_json({"plot": plot, "alert": alert})
             return
 
         if parsed.path == "/api/analyze-batch":
-            users = load_users()
-            state = load_state()
-            if ensure_plot_ownership(state, users):
-                save_state(state)
-            plot_ids = payload.get("plotIds", [])
-            updated = []
-            alerts = []
-            for plot_id in plot_ids:
-                plot, alert = analyze_plot(state, user, plot_id)
-                if plot:
-                    updated.append(plot["id"])
-                if alert:
-                    alerts.append(alert["id"])
-            save_state(state)
+            with open_db() as connection:
+                plot_ids = payload.get("plotIds", [])
+                updated = []
+                alerts = []
+                for plot_id in plot_ids:
+                    plot, alert = analyze_plot(connection, user, plot_id)
+                    if plot:
+                        updated.append(plot["id"])
+                    if alert:
+                        alerts.append(alert["id"])
             self.send_json({"updated": updated, "alerts": alerts})
             return
 
         if parsed.path == "/api/reset":
-            users = load_users()
-            state = load_seed_state()
-            ensure_plot_ownership(state, users)
-            save_state(state)
+            with open_db() as connection:
+                seed_database(connection)
             self.send_json({"ok": True})
             return
 
@@ -601,12 +905,7 @@ def main():
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
-    ensure_data_files()
-    users = load_users()
-    state = load_state()
-    if ensure_plot_ownership(state, users):
-        save_state(state)
-
+    init_db()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), CampoSatHandler)
     print(f"CampoSat running at http://127.0.0.1:{args.port}")
     try:

@@ -558,6 +558,15 @@ function buildAuthSeed() {
         farmName: "Fazenda Cedro Alto",
         whatsapp: "+55 64 99922-1840",
         createdAt: nowLabel()
+      },
+      {
+        id: "AG-04",
+        name: "Ana Luiza Prado",
+        email: "ana@camposat.demo",
+        password: "camposat123",
+        farmName: "Fazenda Santa Helena",
+        whatsapp: "+55 66 99912-4508",
+        createdAt: nowLabel()
       }
     ],
     currentUserId: null

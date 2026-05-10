@@ -12,7 +12,7 @@ O projeto hoje funciona como um MVP local com:
 - detalhe de talhao com mapa ilustrado e historico visual
 - analise individual e em lote
 - historico de alertas
-- backend local em Python
+- backend local em Python com persistencia em SQLite
 - fallback offline no frontend quando a API nao estiver disponivel
 
 ## Stack
@@ -29,7 +29,7 @@ O projeto hoje funciona como um MVP local com:
 - [styles.css](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/styles.css)
 - [server.py](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/server.py)
 - [data/seed_state.json](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/data/seed_state.json)
-- [data/users.json](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/data/users.json)
+- `data/camposat.db` (gerado em runtime)
 
 ## Como rodar
 
@@ -49,6 +49,7 @@ Depois abra:
 - `marina@camposat.demo`
 - `rafael@camposat.demo`
 - `bianca@camposat.demo`
+- `ana@camposat.demo`
 
 Senha demo:
 
@@ -83,6 +84,7 @@ Senha demo:
 3. integrar imagens de satelite e NDVI real
 4. conectar clima real
 5. integrar envio de alerta por WhatsApp
+6. mover sessoes de memoria para persistencia mais robusta
 
 ## Observacao
 
