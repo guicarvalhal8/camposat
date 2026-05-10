@@ -1550,30 +1550,30 @@ function renderDetailView(plot) {
       <section class="map-stage">
         <div class="panel-header">
           <div>
-            <span class="eyebrow">Mapa detalhado do talhao</span>
+            <span class="eyebrow">Mapa do talhao</span>
             <h3>${plot.name}</h3>
-            <p>Camadas de leitura, metadados da cena e historico visual do hotspot principal.</p>
+            <p>Veja a imagem do talhao, entenda a saude da lavoura e identifique o principal ponto de atencao.</p>
           </div>
           <div class="chip-row">
             <span class="chip"><strong>${plot.crop}</strong> • ${plot.hectares} ha</span>
-            <span class="chip"><strong>Cena:</strong> ${scene.capturedAt}</span>
+            <span class="chip"><strong>Ultima imagem:</strong> ${formatDateTime(scene.capturedAt)}</span>
           </div>
         </div>
 
         <div class="map-toolbar">
           <div class="layer-row">
-            ${renderLayerToggle(plot.id, "rgb", "Imagem", layers.rgb)}
-            ${renderLayerToggle(plot.id, "ndvi", "NDVI", layers.ndvi)}
-            ${renderLayerToggle(plot.id, "grid", "Grade", layers.grid)}
-            ${renderLayerToggle(plot.id, "hotspots", "Hotspots", layers.hotspots)}
+            ${renderLayerToggle(plot.id, "rgb", "Foto do satelite", layers.rgb)}
+            ${renderLayerToggle(plot.id, "ndvi", "Saude da lavoura", layers.ndvi)}
+            ${renderLayerToggle(plot.id, "grid", "Divisoes do talhao", layers.grid)}
+            ${renderLayerToggle(plot.id, "hotspots", "Ponto de atencao", layers.hotspots)}
           </div>
           <div class="scene-row">
             ${plot.snapshots
               .map(
                 (item, index) => `
                   <button class="scene-chip ${index === sceneIndex ? "active" : ""}" type="button" data-action="select-scene" data-id="${plot.id}" data-scene-index="${index}">
-                    <strong>${item.capturedAt.slice(5, 10)}</strong>
-                    <span>${item.ndvi.toFixed(2)}</span>
+                    <strong>${formatShortDate(item.capturedAt)}</strong>
+                    <span>${statusLabel(item.status)}</span>
                   </button>
                 `
               )
@@ -1585,57 +1585,57 @@ function renderDetailView(plot) {
           ${renderDetailedMap(plot, scene, layers)}
           <div class="map-chips">
             <div class="map-chip-cluster">
-              <span class="map-tag primary">${scene.source}</span>
-              <span class="map-tag">scene ${scene.sceneId}</span>
+              <span class="map-tag primary">Imagem de satelite</span>
+              <span class="map-tag">${formatDateTime(scene.capturedAt)}</span>
             </div>
             <div class="map-chip-cluster">
-              <span class="map-tag">nuvem ${scene.cloudCoverage}%</span>
-              <span class="map-tag">${plot.coordinatesText}</span>
+              <span class="map-tag">Nuvens ${scene.cloudCoverage}%</span>
+              <span class="map-tag">Local ${plot.coordinatesText}</span>
             </div>
           </div>
           <div class="map-legend">
-            <strong>Legenda NDVI</strong>
-            <p class="tiny">Vermelho indica estresse, amarelo atencao, verde vigor adequado.</p>
+            <strong>Saude da lavoura</strong>
+            <p class="tiny">Vermelho pede vistoria, amarelo pede atencao e verde indica bom desenvolvimento.</p>
             <div class="legend-scale"></div>
             <div class="legend-row">
-              <span>0.20</span>
-              <span>0.50</span>
-              <span>0.85</span>
+              <span>Baixa</span>
+              <span>Media</span>
+              <span>Alta</span>
             </div>
           </div>
           <div class="hotspot-label">
-            <strong>${scene.hotspot.label}</strong>
+            <strong>Ponto de atencao: ${scene.hotspot.label}</strong>
             <span class="tiny">${scene.issue}</span>
           </div>
         </div>
 
         <div class="detail-bottom-panels">
           <section class="panel">
-            <span class="eyebrow">Leitura da cena</span>
-            <h3>Metadados e variacao</h3>
+            <span class="eyebrow">Resumo da imagem</span>
+            <h3>O que foi visto nesta data</h3>
             <div class="metric-stack" style="margin-top: 18px;">
               <div class="metric-box">
-                <span class="metric-label">NDVI atual</span>
+                <span class="metric-label">Indice de saude</span>
                 <span class="metric-value">${scene.ndvi.toFixed(2)}</span>
               </div>
               <div class="metric-box">
-                <span class="metric-label">Variacao</span>
+                <span class="metric-label">Mudanca</span>
                 <span class="metric-value">${scene.delta >= 0 ? "+" : ""}${scene.delta.toFixed(2)}</span>
               </div>
               <div class="metric-box">
-                <span class="metric-label">Area afetada</span>
+                <span class="metric-label">Area em atencao</span>
                 <span class="metric-value">${scene.affectedAreaHa} ha</span>
               </div>
               <div class="metric-box">
-                <span class="metric-label">Resolucao</span>
+                <span class="metric-label">Detalhe da imagem</span>
                 <span class="metric-value">${scene.resolutionM} m</span>
               </div>
               <div class="metric-box">
-                <span class="metric-label">Cena anterior</span>
-                <span class="metric-value">${previousScene ? previousScene.capturedAt : "Primeira leitura"}</span>
+                <span class="metric-label">Imagem anterior</span>
+                <span class="metric-value">${previousScene ? formatDateTime(previousScene.capturedAt) : "Primeira leitura"}</span>
               </div>
               <div class="metric-box">
-                <span class="metric-label">Cobertura de nuvem</span>
+                <span class="metric-label">Nuvens na imagem</span>
                 <span class="metric-value">${scene.cloudCoverage}%</span>
               </div>
             </div>
@@ -3047,6 +3047,35 @@ function formatCurrency(value) {
 
 function formatSigned(value) {
   return `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+}
+
+function formatDateTime(value) {
+  const [datePart = "", timePart = ""] = String(value || "").split(" ");
+  if (!datePart) return "--";
+  const [year, month, day] = datePart.split("-");
+  if (!year || !month || !day) return String(value || "--");
+  return `${day}/${month}/${year}${timePart ? ` ${timePart}` : ""}`;
+}
+
+function formatShortDate(value) {
+  const [datePart = ""] = String(value || "").split(" ");
+  if (!datePart) return "--";
+  const [year, month, day] = datePart.split("-");
+  const monthNames = {
+    "01": "jan",
+    "02": "fev",
+    "03": "mar",
+    "04": "abr",
+    "05": "mai",
+    "06": "jun",
+    "07": "jul",
+    "08": "ago",
+    "09": "set",
+    "10": "out",
+    "11": "nov",
+    "12": "dez"
+  };
+  return `${day}/${monthNames[month] || month}`;
 }
 
 function normalizeText(value) {
