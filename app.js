@@ -937,8 +937,9 @@ function mountDetailMap(route, activePlot) {
 
 function mountFormMap(route) {
   if (route.view !== "form") return;
-  const container = document.getElementById("plot-geometry-map");
-  if (!container || typeof window.maplibregl === "undefined" || state.form.geometryMode !== "draw") return;
+  const containerId = state.form.geometryMode === "import" ? "plot-geometry-preview-map" : "plot-geometry-map";
+  const container = document.getElementById(containerId);
+  if (!container || typeof window.maplibregl === "undefined" || !["draw", "import"].includes(state.form.geometryMode)) return;
 
   const draft = ensureFormDraft(getCurrentUser(), getActiveAgronomist());
   const lat = Number(draft.lat);
@@ -963,21 +964,23 @@ function mountFormMap(route) {
     updateFormMapLayers();
   });
 
-  formMap.on("click", (event) => {
-    state.form.points = [
-      ...state.form.points,
-      [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]
-    ];
-    state.form.error = null;
-    const geometry = getDrawnGeometry();
-    if (geometry) {
-      syncDraftCenterFromGeometry(geometry);
-    } else {
-      state.form.mapCenter = { lat: event.lngLat.lat, lon: event.lngLat.lng };
-      state.form.mapZoom = Math.max(formMap.getZoom(), 14.5);
-    }
-    render();
-  });
+  if (state.form.geometryMode === "draw") {
+    formMap.on("click", (event) => {
+      state.form.points = [
+        ...state.form.points,
+        [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]
+      ];
+      state.form.error = null;
+      const geometry = getDrawnGeometry();
+      if (geometry) {
+        syncDraftCenterFromGeometry(geometry);
+      } else {
+        state.form.mapCenter = { lat: event.lngLat.lat, lon: event.lngLat.lng };
+        state.form.mapZoom = Math.max(formMap.getZoom(), 14.5);
+      }
+      render();
+    });
+  }
 
   formMap.on("moveend", () => {
     if (!formMap) return;
@@ -991,8 +994,11 @@ function updateFormMapLayers() {
   if (!formMap || !formMap.isStyleLoaded()) return;
   formMarkers.forEach((marker) => marker.remove());
   formMarkers = [];
-  const geometry = getDrawnGeometry();
-  const points = state.form.points.map((coordinate, index) => ({
+  const geometry = getPreviewGeometry();
+  const rawPoints = state.form.geometryMode === "import"
+    ? (geometry?.coordinates?.[0] || []).slice(0, -1)
+    : state.form.points;
+  const points = rawPoints.map((coordinate, index) => ({
     type: "Feature",
     properties: { index: index + 1 },
     geometry: {
@@ -1010,13 +1016,13 @@ function updateFormMapLayers() {
   };
   const lineData = {
     type: "FeatureCollection",
-    features: state.form.points.length >= 2
+    features: rawPoints.length >= 2
       ? [{
           type: "Feature",
           properties: {},
           geometry: {
             type: "LineString",
-            coordinates: state.form.points
+            coordinates: rawPoints
           }
         }]
       : []
@@ -1071,6 +1077,8 @@ function updateFormMapLayers() {
       maxZoom: 17
     });
   }
+
+  if (state.form.geometryMode !== "draw") return;
 
   state.form.points.forEach((coordinate, index) => {
     const element = document.createElement("button");
@@ -2037,13 +2045,43 @@ function renderFormView() {
                   <p class="tiny">Dica: clique ao redor da borda do talhao. Depois disso, arraste os pontos para alinhar melhor o contorno com a imagem.</p>
                 </div>
               </div>
+              <div class="geometry-point-list">
+                <div class="list-head">
+                  <div>
+                    <span class="eyebrow">Pontos do contorno</span>
+                    <h3>Ajuste cada ponto com precisao</h3>
+                    <p>Voce pode corrigir latitude e longitude manualmente ou remover pontos desta lista.</p>
+                  </div>
+                </div>
+                <div class="point-editor-list">
+                  ${state.form.points.length ? state.form.points.map(renderPointEditorRow).join("") : renderEmptyState("Nenhum ponto marcado ainda", "Clique no mapa para comecar o desenho da area.")}
+                </div>
+              </div>
             ` : ""}
 
             ${state.form.geometryMode === "import" ? `
-              <div class="field-group full">
-                <label for="plot-geometry-text">GeoJSON ou KML do talhao</label>
-                <textarea id="plot-geometry-text" name="geometryText" placeholder='Cole aqui um Polygon em GeoJSON, um Feature/FeatureCollection ou um KML com Polygon.'>${escapeHtml(state.form.importText)}</textarea>
-                <p class="tiny">Aceita Polygon, Feature, FeatureCollection e tambem KML com Polygon. O sistema usa o primeiro poligono valido encontrado.</p>
+              <div class="geometry-import-shell">
+                <div class="field-group full">
+                  <label for="plot-geometry-file">Arquivo do talhao</label>
+                  <input id="plot-geometry-file" name="geometryFile" type="file" accept=".geojson,.json,.kml,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml" />
+                  <p class="tiny">Voce pode enviar um arquivo `.geojson`, `.json` ou `.kml`.</p>
+                </div>
+                <div class="field-group full">
+                  <label for="plot-geometry-text">GeoJSON ou KML do talhao</label>
+                  <textarea id="plot-geometry-text" name="geometryText" placeholder='Cole aqui um Polygon em GeoJSON, um Feature/FeatureCollection ou um KML com Polygon.'>${escapeHtml(state.form.importText)}</textarea>
+                  <p class="tiny">Aceita Polygon, Feature, FeatureCollection e tambem KML com Polygon. O sistema usa o primeiro poligono valido encontrado.</p>
+                </div>
+                <div class="geometry-preview-shell">
+                  <div class="geometry-map" id="plot-geometry-preview-map" aria-label="Preview do talhao importado"></div>
+                  <div class="geometry-draw-meta">
+                    <div class="metric-box">
+                      <span class="metric-label">Preview da importacao</span>
+                      <span class="metric-value">${geometry ? "Pronto" : "Aguardando"}</span>
+                      <p class="metric-help">${geometrySummary}</p>
+                    </div>
+                    <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada.</p>
+                  </div>
+                </div>
               </div>
             ` : ""}
 
@@ -2109,6 +2147,37 @@ function renderGeometryModeButton(value, title, description, current) {
       <strong>${title}</strong>
       <span>${description}</span>
     </button>
+  `;
+}
+
+function renderPointEditorRow(point, index) {
+  return `
+    <div class="point-editor-row">
+      <div class="point-editor-index">P${index + 1}</div>
+      <label class="field-group point-field">
+        <span>Longitude</span>
+        <input
+          type="number"
+          step="0.000001"
+          value="${escapeHtml(point[0])}"
+          data-action="edit-geometry-point"
+          data-axis="lon"
+          data-point-index="${index}"
+        />
+      </label>
+      <label class="field-group point-field">
+        <span>Latitude</span>
+        <input
+          type="number"
+          step="0.000001"
+          value="${escapeHtml(point[1])}"
+          data-action="edit-geometry-point"
+          data-axis="lat"
+          data-point-index="${index}"
+        />
+      </label>
+      <button class="button-secondary point-remove-button" type="button" data-action="remove-geometry-point" data-point-index="${index}">Remover</button>
+    </div>
   `;
 }
 
@@ -2270,6 +2339,10 @@ function getDraftGeometry() {
   return null;
 }
 
+function getPreviewGeometry() {
+  return state.form.geometryMode === "import" ? getDraftGeometry() : getDrawnGeometry();
+}
+
 function getDraftGeometrySummary(geometry) {
   if (state.form.geometryMode === "draw") {
     if (state.form.points.length < 3) {
@@ -2418,6 +2491,19 @@ async function handleClick(event) {
     return;
   }
 
+  const removeGeometryPointButton = event.target.closest("[data-action='remove-geometry-point']");
+  if (removeGeometryPointButton) {
+    const index = Number(removeGeometryPointButton.dataset.pointIndex);
+    if (Number.isInteger(index) && index >= 0) {
+      state.form.points = state.form.points.filter((_, currentIndex) => currentIndex !== index);
+      const geometry = getDrawnGeometry();
+      if (geometry) syncDraftCenterFromGeometry(geometry);
+      state.form.error = null;
+      render();
+    }
+    return;
+  }
+
   const authModeButton = event.target.closest("[data-action='set-auth-mode']");
   if (authModeButton) {
     state.auth.mode = authModeButton.dataset.mode === "register" ? "register" : "login";
@@ -2507,7 +2593,7 @@ async function handleClick(event) {
   }
 }
 
-function handleChange(event) {
+async function handleChange(event) {
   const { name, value } = event.target;
   if (name === "detailPlotId") {
     if (value) {
@@ -2517,6 +2603,37 @@ function handleChange(event) {
   }
   if (event.target.closest("#plot-form")) {
     ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+    if (name === "geometryFile") {
+      const [file] = event.target.files || [];
+      if (!file) return;
+      try {
+        state.form.importText = await readFileAsText(file);
+        state.form.draft.geometryText = state.form.importText;
+        state.form.geometryMode = "import";
+        state.form.error = null;
+        const geometry = getDraftGeometry();
+        if (geometry) syncDraftCenterFromGeometry(geometry);
+      } catch (error) {
+        state.form.error = "Nao foi possivel ler o arquivo enviado.";
+      }
+      render();
+      return;
+    }
+    if (event.target.dataset.action === "edit-geometry-point") {
+      const index = Number(event.target.dataset.pointIndex);
+      const axis = event.target.dataset.axis;
+      const numericValue = Number(value);
+      if (Number.isInteger(index) && Number.isFinite(numericValue) && state.form.points[index]) {
+        const nextPoint = [...state.form.points[index]];
+        nextPoint[axis === "lat" ? 1 : 0] = Number(numericValue.toFixed(6));
+        state.form.points[index] = nextPoint;
+        const geometry = getDrawnGeometry();
+        if (geometry) syncDraftCenterFromGeometry(geometry);
+        state.form.error = null;
+      }
+      render();
+      return;
+    }
     state.form.draft[name] = value;
     if (name === "geometryText") {
       state.form.importText = value;
@@ -2537,11 +2654,32 @@ function handleInput(event) {
   if (!event.target.closest("#plot-form")) return;
   const { name, value } = event.target;
   ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  if (event.target.dataset.action === "edit-geometry-point") {
+    const index = Number(event.target.dataset.pointIndex);
+    const axis = event.target.dataset.axis;
+    const numericValue = Number(value);
+    if (Number.isInteger(index) && Number.isFinite(numericValue) && state.form.points[index]) {
+      const nextPoint = [...state.form.points[index]];
+      nextPoint[axis === "lat" ? 1 : 0] = Number(numericValue.toFixed(6));
+      state.form.points[index] = nextPoint;
+      state.form.error = null;
+    }
+    return;
+  }
   state.form.draft[name] = value;
   if (name === "geometryText") {
     state.form.importText = value;
     state.form.error = null;
   }
+}
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Falha ao ler arquivo."));
+    reader.readAsText(file);
+  });
 }
 
 async function handleSubmit(event) {

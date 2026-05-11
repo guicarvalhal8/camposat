@@ -1041,6 +1041,18 @@ optgroup {
   margin-top: 18px;
 }
 
+.geometry-import-shell,
+.geometry-point-list {
+  margin-top: 18px;
+}
+
+.geometry-preview-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 16px;
+  margin-top: 18px;
+}
+
 .geometry-map {
   min-height: 360px;
   border-radius: 24px;
@@ -1071,6 +1083,46 @@ optgroup {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.point-editor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.point-editor-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.point-editor-index {
+  height: 48px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: #031219;
+  background: linear-gradient(135deg, rgba(103, 241, 201, 1), rgba(126, 217, 255, 0.88));
+}
+
+.point-field {
+  margin: 0;
+}
+
+.point-field span {
+  font-size: 0.82rem;
+}
+
+.point-remove-button {
+  white-space: nowrap;
 }
 
 .geometry-auto-note {
