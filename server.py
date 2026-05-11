@@ -883,11 +883,14 @@ function evaluatePixel(sample) {
             return {"ok": False, "reason": "image-parse-failed"}
         if not geometry:
             return {"ok": False, "reason": "no-region-found"}
+        geometry = snap_polygon_to_straight_edges(geometry)
         geometry = scale_geometry_to_target_area(geometry, plot.get("hectares", 1))
+        geometry = snap_polygon_to_straight_edges(geometry)
         diagnostics["measuredHectares"] = round(geometry_area_hectares(geometry), 1)
         diagnostics["targetHectares"] = float(plot.get("hectares", 0) or 0)
         diagnostics["source"] = "Sentinel-2 L2A via Sentinel Hub"
         diagnostics["mode"] = "image-guided"
+        diagnostics["shapeMode"] = "straight-edge-aware"
         return {"ok": True, "geometry": geometry, "diagnostics": diagnostics}
 
     def fetch_preview(self, plot, snapshot):
@@ -1444,6 +1447,152 @@ def scale_geometry_to_target_area(geometry, target_hectares):
             center["lat"] + (float(lat) - center["lat"]) * factor,
         ])
     return {"type": "Polygon", "coordinates": [_close_ring(scaled_ring)]}
+
+
+def geometry_to_local_xy(geometry):
+    center = centroid_from_geometry(geometry)
+    if not center:
+        return None, None
+    meters_per_degree_lat = 111320
+    meters_per_degree_lon = max(1.0, 111320 * math.cos((center["lat"] * math.pi) / 180))
+    ring = ((geometry or {}).get("coordinates") or [[]])[0]
+    unique = ring[:-1] if ring and ring[0] == ring[-1] else ring
+    points = [
+        (
+            (float(lon) - center["lon"]) * meters_per_degree_lon,
+            (float(lat) - center["lat"]) * meters_per_degree_lat,
+        )
+        for lon, lat in unique
+    ]
+    return center, points
+
+
+def local_xy_to_geometry(center, points):
+    if not center or not points:
+        return None
+    meters_per_degree_lat = 111320
+    meters_per_degree_lon = max(1.0, 111320 * math.cos((center["lat"] * math.pi) / 180))
+    ring = [
+        [
+            center["lon"] + (float(x) / meters_per_degree_lon),
+            center["lat"] + (float(y) / meters_per_degree_lat),
+        ]
+        for x, y in points
+    ]
+    return {"type": "Polygon", "coordinates": [_close_ring(ring)]}
+
+
+def point_line_distance(point, start, end):
+    px, py = point
+    x1, y1 = start
+    x2, y2 = end
+    dx = x2 - x1
+    dy = y2 - y1
+    if dx == 0 and dy == 0:
+        return math.hypot(px - x1, py - y1)
+    t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)))
+    proj_x = x1 + t * dx
+    proj_y = y1 + t * dy
+    return math.hypot(px - proj_x, py - proj_y)
+
+
+def simplify_local_points(points, tolerance=24.0):
+    if len(points) <= 4:
+        return points[:]
+
+    def recurse(segment_points):
+        if len(segment_points) <= 2:
+            return segment_points
+        start = segment_points[0]
+        end = segment_points[-1]
+        max_distance = -1.0
+        split_index = None
+        for index in range(1, len(segment_points) - 1):
+            distance = point_line_distance(segment_points[index], start, end)
+            if distance > max_distance:
+                max_distance = distance
+                split_index = index
+        if max_distance <= tolerance or split_index is None:
+            return [start, end]
+        left = recurse(segment_points[: split_index + 1])
+        right = recurse(segment_points[split_index:])
+        return left[:-1] + right
+
+    simplified = recurse(points + [points[0]])[:-1]
+    return simplified if len(simplified) >= 4 else points[:]
+
+
+def rotate_xy(point, angle_radians):
+    x, y = point
+    cos_a = math.cos(angle_radians)
+    sin_a = math.sin(angle_radians)
+    return (x * cos_a - y * sin_a, x * sin_a + y * cos_a)
+
+
+def unrotate_xy(point, angle_radians):
+    return rotate_xy(point, -angle_radians)
+
+
+def dominant_segment_angle(points):
+    best_angle = 0.0
+    best_weight = -1.0
+    for index, current in enumerate(points):
+        nxt = points[(index + 1) % len(points)]
+        dx = nxt[0] - current[0]
+        dy = nxt[1] - current[1]
+        length = math.hypot(dx, dy)
+        if length < 5:
+            continue
+        angle = math.atan2(dy, dx)
+        normalized = ((angle + math.pi / 4) % (math.pi / 2)) - math.pi / 4
+        if length > best_weight:
+            best_weight = length
+            best_angle = normalized
+    return best_angle
+
+
+def snap_polygon_to_straight_edges(geometry):
+    center, local_points = geometry_to_local_xy(geometry)
+    if not center or len(local_points) < 4:
+        return geometry
+
+    simplified = simplify_local_points(local_points, tolerance=26.0)
+    base_angle = dominant_segment_angle(simplified)
+    rotated = [rotate_xy(point, base_angle) for point in simplified]
+    snapped = []
+    for index, point in enumerate(rotated):
+        prev_point = rotated[index - 1]
+        next_point = rotated[(index + 1) % len(rotated)]
+        current_x, current_y = point
+        prev_dx = current_x - prev_point[0]
+        prev_dy = current_y - prev_point[1]
+        next_dx = next_point[0] - current_x
+        next_dy = next_point[1] - current_y
+
+        use_vertical = abs(prev_dx) < abs(prev_dy) or abs(next_dx) < abs(next_dy)
+        use_horizontal = abs(prev_dy) <= abs(prev_dx) or abs(next_dy) <= abs(next_dx)
+
+        if use_vertical and not use_horizontal:
+            snapped.append((round(current_x / 6.0) * 6.0, current_y))
+            continue
+        if use_horizontal and not use_vertical:
+            snapped.append((current_x, round(current_y / 6.0) * 6.0))
+            continue
+
+        snapped_x = round(current_x / 6.0) * 6.0
+        snapped_y = round(current_y / 6.0) * 6.0
+        snapped.append((snapped_x, snapped_y))
+
+    cleaned = []
+    for point in snapped:
+        if not cleaned or math.hypot(point[0] - cleaned[-1][0], point[1] - cleaned[-1][1]) > 8:
+            cleaned.append(point)
+    if len(cleaned) < 4:
+        cleaned = snapped
+
+    unrotated = [unrotate_xy(point, base_angle) for point in cleaned]
+    result = local_xy_to_geometry(center, unrotated)
+    return result or geometry
 
 
 def build_bbox_from_center(center, hectares, expansion=1.0):

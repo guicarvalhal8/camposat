@@ -3037,7 +3037,7 @@ function renderSuggestionSummaryCard(draft, geometry) {
     ? `${Math.abs(summary.measuredHa - summary.expectedHa).toFixed(1)} ha de diferenca`
     : "Informe os hectares para travar melhor a sugestao";
   const leadCopy = suggestionMeta?.mode === "image-guided"
-    ? `Nesta tentativa, o sistema usou a imagem do satelite para encontrar a mancha de vegetacao mais forte ao redor do centro informado${suggestionMeta?.edgeMode === "vegetation-and-texture" ? " e tambem acompanhou mudancas de textura e cor na cena" : ""}, antes de ajustar a borda para ficar perto dos hectares cadastrados.`
+    ? `Nesta tentativa, o sistema usou a imagem do satelite para encontrar a mancha de vegetacao mais forte ao redor do centro informado${suggestionMeta?.edgeMode === "vegetation-and-texture" ? " e tambem acompanhou mudancas de textura e cor na cena" : ""}${suggestionMeta?.shapeMode === "straight-edge-aware" ? ", alem de alinhar melhor retas e quinas quando a area parece geometrica" : ""}, antes de ajustar a borda para ficar perto dos hectares cadastrados.`
     : "Hoje essa sugestao ainda nao enxerga pixel por pixel como um operador humano. Ela usa localizacao central, hectares e um formato provavel para entregar uma primeira borda que voce pode revisar no mapa.";
   return `
     <div class="geometry-advice-shell">
