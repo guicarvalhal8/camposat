@@ -46,6 +46,31 @@ Depois abra:
 
 - [http://127.0.0.1:8000](http://127.0.0.1:8000)
 
+## Ativar Sentinel Hub
+
+Para ligar imagem real e NDVI real por talhao:
+
+1. crie o arquivo `.env.local` na raiz do projeto usando [`.env.local.example`](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/.env.local.example) como base
+2. preencha:
+   - `SENTINELHUB_CLIENT_ID`
+   - `SENTINELHUB_CLIENT_SECRET`
+3. reinicie o servidor
+
+Exemplo no PowerShell:
+
+```powershell
+cd "C:\Users\guica\.gemini\antigravity\scratch\Agro-main\Agro-main"
+copy .env.local.example .env.local
+notepad .env.local
+python server.py --port 8000
+```
+
+Quando essas credenciais estiverem validas, o app passa a tentar:
+
+- buscar foto real da cena
+- buscar NDVI visual da mesma cena
+- calcular NDVI medio real do talhao
+
 ## Contas demo
 
 - `marina@camposat.demo`
@@ -83,7 +108,7 @@ Senha demo:
 
 1. mover sessoes de memoria para persistencia mais robusta
 2. integrar geometria real de talhao vinda de cadastro ou GeoJSON
-3. integrar imagens de satelite e NDVI real
+3. consolidar o NDVI real do talhao com mais estatisticas e historico temporal
 4. conectar clima real
 5. integrar envio de alerta por WhatsApp
 6. evoluir de `SQLite` para `PostgreSQL` com PostGIS

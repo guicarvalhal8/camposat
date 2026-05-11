@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 SEED_PATH = DATA_DIR / "seed_state.json"
 DB_PATH = DATA_DIR / "camposat.db"
+ENV_PATH = ROOT / ".env.local"
 SESSION_COOKIE_NAME = "camposat_session"
 SESSIONS = {}
 
@@ -58,6 +59,23 @@ AUTH_SEED_USERS = [
         "whatsapp": "+55 66 99912-4508",
     },
 ]
+
+
+def load_local_env(path=ENV_PATH):
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if key:
+            os.environ.setdefault(key, value)
+
+
+load_local_env()
 
 
 def now_label():
@@ -692,6 +710,7 @@ class SentinelHubImageProvider:
         self.client_id = os.getenv("SENTINELHUB_CLIENT_ID", "").strip()
         self.client_secret = os.getenv("SENTINELHUB_CLIENT_SECRET", "").strip()
         self.process_url = os.getenv("SENTINELHUB_PROCESS_URL", "https://services.sentinel-hub.com/api/v1/process").strip()
+        self.stats_url = os.getenv("SENTINELHUB_STATS_URL", "https://services.sentinel-hub.com/api/v1/statistics").strip()
         self.token_url = os.getenv("SENTINELHUB_TOKEN_URL", "https://services.sentinel-hub.com/oauth/token").strip()
         self._token = None
         self._token_expires_at = None
@@ -838,6 +857,111 @@ function evaluatePixel(sample) {
             "imageMode": "real-preview",
             "analysisSource": "Sentinel-2 L2A via Sentinel Hub",
             "imageNote": "Imagem real buscada para apoiar a vistoria visual. Quando disponivel, o painel tambem traz a camada visual de NDVI da mesma cena.",
+        }
+
+    def fetch_ndvi_stats(self, plot, snapshot):
+        if not self.enabled:
+            return None
+        token = self._get_token()
+        if not token:
+            return None
+
+        geometry = build_plot_aoi(plot)
+        bbox = build_plot_bbox(plot)
+        if not geometry or not bbox:
+            return None
+
+        captured = datetime.strptime(snapshot["capturedAt"], "%Y-%m-%d %H:%M")
+        time_from = (captured - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
+        time_to = captured.strftime("%Y-%m-%dT23:59:59Z")
+        evalscript = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{
+      bands: ["B04", "B08", "CLD", "dataMask"]
+    }],
+    output: [
+      { id: "ndvi", bands: 1, sampleType: "FLOAT32" },
+      { id: "dataMask", bands: 1 }
+    ]
+  };
+}
+
+function evaluatePixel(sample) {
+  let validMask = sample.dataMask;
+  if (sample.CLD > 60) {
+    validMask = 0;
+  }
+  return {
+    ndvi: [index(sample.B08, sample.B04)],
+    dataMask: [validMask]
+  };
+}
+"""
+        payload = {
+            "input": {
+                "bounds": {
+                    "bbox": bbox,
+                    "geometry": geometry,
+                    "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
+                },
+                "data": [
+                    {
+                        "type": "sentinel-2-l2a",
+                        "dataFilter": {
+                            "timeRange": {"from": time_from, "to": time_to},
+                            "mosaickingOrder": "leastCC",
+                        },
+                    }
+                ],
+            },
+            "aggregation": {
+                "timeRange": {"from": time_from, "to": time_to},
+                "aggregationInterval": {"of": "P1D"},
+                "resx": 10,
+                "resy": 10,
+                "evalscript": evalscript.strip(),
+            },
+            "calculations": {
+                "ndvi": {
+                    "statistics": {
+                        "default": {
+                            "statistics": ["mean", "stDev", "sampleCount", "min", "max"]
+                        }
+                    }
+                }
+            },
+        }
+        request = urllib_request.Request(
+            self.stats_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=40) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError, json.JSONDecodeError):
+            return None
+
+        intervals = data.get("data") or []
+        if not intervals:
+            return None
+        outputs = intervals[-1].get("outputs") or {}
+        ndvi_stats = ((outputs.get("ndvi") or {}).get("bands") or {}).get("B0") or {}
+        stats = (ndvi_stats.get("stats") or {})
+        if stats.get("mean") is None:
+            return None
+        return {
+            "meanNdvi": round(float(stats.get("mean")), 2),
+            "minNdvi": round(float(stats.get("min", stats.get("mean"))), 2),
+            "maxNdvi": round(float(stats.get("max", stats.get("mean"))), 2),
+            "sampleCount": int(stats.get("sampleCount", 0) or 0),
         }
 
 
@@ -1193,10 +1317,46 @@ def build_plot_bbox(plot):
     return [lon - lon_delta, lat - lat_delta, lon + lon_delta, lat + lat_delta]
 
 
+def build_plot_aoi(plot):
+    geometry = normalize_polygon_geometry(plot.get("geometry"))
+    if geometry:
+        return geometry
+    bbox = build_plot_bbox(plot)
+    if not bbox:
+        return None
+    min_lon, min_lat, max_lon, max_lat = bbox
+    return {
+        "type": "Polygon",
+        "coordinates": [[
+            [min_lon, min_lat],
+            [max_lon, min_lat],
+            [max_lon, max_lat],
+            [min_lon, max_lat],
+            [min_lon, min_lat],
+        ]],
+    }
+
+
 def enrich_snapshot_visual(plot, snapshot):
     live_preview = REGISTRY.satellite_images.fetch_preview(plot, snapshot)
     if live_preview:
         snapshot.update(live_preview)
+    live_stats = REGISTRY.satellite_images.fetch_ndvi_stats(plot, snapshot)
+    if live_stats:
+        previous_ndvi = float(snapshot.get("ndvi", live_stats["meanNdvi"]))
+        snapshot["ndvi"] = live_stats["meanNdvi"]
+        snapshot["delta"] = round(snapshot["ndvi"] - previous_ndvi, 2)
+        snapshot["ndviStats"] = live_stats
+        snapshot["analysisSource"] = "Sentinel-2 L2A via Sentinel Hub"
+        snapshot["imageMode"] = "real-preview"
+        if snapshot["ndvi"] < 0.52:
+            snapshot["status"] = "red"
+        elif snapshot["ndvi"] < 0.68:
+            snapshot["status"] = "yellow"
+        else:
+            snapshot["status"] = "green"
+        if live_stats["sampleCount"] > 0:
+            snapshot["issue"] = f"NDVI medio real calculado com {live_stats['sampleCount']} pixels validos nesta cena."
         return
     snapshot.setdefault("imageDataUrl", None)
     snapshot.setdefault("ndviImageDataUrl", None)
@@ -1206,6 +1366,7 @@ def enrich_snapshot_visual(plot, snapshot):
         "imageNote",
         "Sem credencial externa configurada, a analise segue usando o fluxo local e a imagem real aparece apenas no mapa base.",
     )
+    snapshot.setdefault("ndviStats", None)
 
 
 class CampoSatHandler(SimpleHTTPRequestHandler):

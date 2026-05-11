@@ -2067,6 +2067,7 @@ function renderDetailView(plot) {
             <div class="metric-stack" style="margin-top: 18px;">
               ${renderExplainMetric("Contorno usado na leitura", getGeometrySourceLabel(plot), describeGeometrySource(plot))}
               ${renderExplainMetric("Saude da lavoura", scene.ndvi.toFixed(2), describeHealthIndex(scene.ndvi))}
+              ${scene.ndviStats ? renderExplainMetric("Faixa do NDVI real", `${scene.ndviStats.minNdvi.toFixed(2)} a ${scene.ndviStats.maxNdvi.toFixed(2)}`, `O valor medio foi calculado com ${scene.ndviStats.sampleCount} pixels validos nesta cena.`) : ""}
               ${renderExplainMetric("Mudanca desde a ultima imagem", `${scene.delta >= 0 ? "+" : ""}${scene.delta.toFixed(2)}`, describeDelta(scene.delta))}
               ${renderExplainMetric("Area que merece atencao", `${scene.affectedAreaHa} ha`, describeRiskArea(scene.affectedAreaHa))}
               ${renderExplainMetric("Nivel de detalhe da imagem", `${scene.resolutionM} m`, describeResolution(scene.resolutionM))}
@@ -4352,6 +4353,9 @@ function describeSidebarPortfolio(activeAgronomist, farmCount, plotCount, redAle
 
 function describeDataSource() {
   if (state.offlineMode) return "dados de exemplo salvos no navegador";
+  if (state.plots.some((plot) => plot.snapshots?.some((snapshot) => snapshot.imageMode === "real-preview"))) {
+    return "servidor local com cena real do Sentinel-2";
+  }
   return "servidor local do aplicativo";
 }
 
