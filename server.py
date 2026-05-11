@@ -754,8 +754,11 @@ class SentinelHubImageProvider:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
-        with urllib_request.urlopen(request, timeout=25) as response:
-            payload = json.loads(response.read().decode("utf-8"))
+        try:
+            with urllib_request.urlopen(request, timeout=25) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError, json.JSONDecodeError):
+            return None
         token = payload.get("access_token")
         expires_in = int(payload.get("expires_in", 0) or 0)
         if not token:
