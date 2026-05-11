@@ -729,20 +729,7 @@ class SentinelHubImageProvider:
         self._token_expires_at = datetime.utcnow() + timedelta(seconds=max(0, expires_in - 60))
         return token
 
-    def fetch_preview(self, plot, snapshot):
-        if not self.enabled:
-            return None
-        token = self._get_token()
-        if not token:
-            return None
-
-        bbox = build_plot_bbox(plot)
-        if not bbox:
-            return None
-
-        captured = datetime.strptime(snapshot["capturedAt"], "%Y-%m-%d %H:%M")
-        time_from = (captured - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
-        time_to = captured.strftime("%Y-%m-%dT23:59:59Z")
+    def _run_process(self, token, bbox, time_from, time_to, evalscript, width=640, height=640):
         payload = {
             "input": {
                 "bounds": {
@@ -760,11 +747,40 @@ class SentinelHubImageProvider:
                 ],
             },
             "output": {
-                "width": 640,
-                "height": 640,
+                "width": width,
+                "height": height,
                 "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
             },
-            "evalscript": """
+            "evalscript": evalscript.strip(),
+        }
+        request = urllib_request.Request(
+            self.process_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "image/png",
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(request, timeout=40) as response:
+            return response.read()
+
+    def fetch_preview(self, plot, snapshot):
+        if not self.enabled:
+            return None
+        token = self._get_token()
+        if not token:
+            return None
+
+        bbox = build_plot_bbox(plot)
+        if not bbox:
+            return None
+
+        captured = datetime.strptime(snapshot["capturedAt"], "%Y-%m-%d %H:%M")
+        time_from = (captured - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
+        time_to = captured.strftime("%Y-%m-%dT23:59:59Z")
+        rgb_evalscript = """
 //VERSION=3
 function setup() {
   return {
@@ -781,21 +797,33 @@ function setup() {
 function evaluatePixel(sample) {
   return [2.5 * sample.B04, 2.5 * sample.B03, 2.5 * sample.B02];
 }
-""".strip(),
-        }
-        request = urllib_request.Request(
-            self.process_url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "Accept": "image/png",
-            },
-            method="POST",
-        )
+"""
+        ndvi_evalscript = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{
+      bands: ["B04", "B08", "dataMask"]
+    }],
+    output: {
+      bands: 4,
+      sampleType: "AUTO"
+    }
+  };
+}
+
+function evaluatePixel(sample) {
+  let ndvi = index(sample.B08, sample.B04);
+  if (ndvi < 0.2) return [0.75, 0.18, 0.16, sample.dataMask];
+  if (ndvi < 0.4) return [0.95, 0.64, 0.22, sample.dataMask];
+  if (ndvi < 0.6) return [0.92, 0.86, 0.26, sample.dataMask];
+  if (ndvi < 0.75) return [0.4, 0.79, 0.37, sample.dataMask];
+  return [0.16, 0.63, 0.34, sample.dataMask];
+}
+"""
         try:
-            with urllib_request.urlopen(request, timeout=40) as response:
-                image_bytes = response.read()
+            image_bytes = self._run_process(token, bbox, time_from, time_to, rgb_evalscript)
+            ndvi_bytes = self._run_process(token, bbox, time_from, time_to, ndvi_evalscript)
         except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
             return None
 
@@ -803,11 +831,13 @@ function evaluatePixel(sample) {
             return None
 
         encoded = base64.b64encode(image_bytes).decode("ascii")
+        ndvi_encoded = base64.b64encode(ndvi_bytes).decode("ascii") if ndvi_bytes else None
         return {
             "imageDataUrl": f"data:image/png;base64,{encoded}",
+            "ndviImageDataUrl": f"data:image/png;base64,{ndvi_encoded}" if ndvi_encoded else None,
             "imageMode": "real-preview",
             "analysisSource": "Sentinel-2 L2A via Sentinel Hub",
-            "imageNote": "Imagem real buscada para apoiar a vistoria visual. Os indicadores do CampoSat ainda seguem o fluxo atual de analise.",
+            "imageNote": "Imagem real buscada para apoiar a vistoria visual. Quando disponivel, o painel tambem traz a camada visual de NDVI da mesma cena.",
         }
 
 
@@ -1169,6 +1199,7 @@ def enrich_snapshot_visual(plot, snapshot):
         snapshot.update(live_preview)
         return
     snapshot.setdefault("imageDataUrl", None)
+    snapshot.setdefault("ndviImageDataUrl", None)
     snapshot.setdefault("imageMode", "demo")
     snapshot.setdefault("analysisSource", "Simulacao local do CampoSat")
     snapshot.setdefault(

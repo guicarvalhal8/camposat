@@ -1454,6 +1454,22 @@ optgroup {
   gap: 14px;
 }
 
+.scene-image-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scene-image-card {
+  margin: 0;
+}
+
+.scene-image-card figcaption {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .scene-image-preview {
   width: 100%;
   aspect-ratio: 1 / 1;
@@ -1479,6 +1495,26 @@ optgroup {
   border-radius: 20px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.plot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.farm-card {
+  padding: 20px;
+}
+
+.micro-item-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.micro-item-link:hover {
+  border-color: rgba(103, 241, 201, 0.24);
+  background: rgba(103, 241, 201, 0.05);
 }
 
 .big-number {
@@ -1908,6 +1944,7 @@ optgroup {
   .field-grid,
   .metric-row,
   .metric-stack,
+  .scene-image-grid,
   .status-board,
   .demo-flow,
   .detail-bottom-panels,

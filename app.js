@@ -264,6 +264,7 @@ function buildOfflineSnapshot(plotId, crop, options) {
     resolutionM: 10,
     sceneId: `S2-DEMO-${plotId}-${String(index).padStart(2, "0")}`,
     imageDataUrl: null,
+    ndviImageDataUrl: null,
     imageMode: "demo",
     analysisSource: "Simulacao local do CampoSat",
     imageNote: "Sem credencial externa configurada, o CampoSat usa a imagem base do mapa como apoio visual.",
@@ -1246,6 +1247,9 @@ function getRoute() {
   if (!parts.length || parts[0] === "talhoes") {
     return { view: "plots" };
   }
+  if (parts[0] === "fazendas") {
+    return { view: "farms" };
+  }
   if (parts[0] === "cadastro") {
     return { view: "form", plotId: parts[1] || null };
   }
@@ -1434,6 +1438,13 @@ function renderSidebar(route) {
           icon: iconGrid()
         },
         {
+          href: "#/fazendas",
+          key: "farms",
+          title: "Fazendas",
+          text: "Entre pela fazenda e depois abra os talhoes",
+          icon: iconBarn()
+        },
+        {
           href: portfolioPlots.length ? `#/talhao/${(getMostCriticalPlot(portfolioPlots) || portfolioPlots[0]).id}` : "#/cadastro",
           key: "detail",
           title: "Ver mapa",
@@ -1558,6 +1569,16 @@ function renderTopbar(route, activePlot) {
     primaryKpiValue = String(getPortfolioPlots().length);
     secondaryKpiLabel = "Ultima atualizacao";
     secondaryKpiValue = state.meta?.lastUpdated ? formatDateTime(state.meta.lastUpdated) : "--";
+  } else if (route.view === "farms") {
+    current = {
+      title: "Suas fazendas",
+      text: "Navegue primeiro pela fazenda e depois escolha o talhao que voce quer acompanhar mais de perto."
+    };
+    modeLabel = "Fazendas";
+    primaryKpiLabel = "Fazendas";
+    primaryKpiValue = String(stats.farmCount);
+    secondaryKpiLabel = "Areas nessas fazendas";
+    secondaryKpiValue = String(getPortfolioPlots().length);
   } else if (route.view === "detail" && activePlot) {
     const scene = getActiveScene(activePlot);
     current = {
@@ -1620,9 +1641,96 @@ function renderTopbar(route, activePlot) {
 
 function renderView(route, activePlot) {
   if (route.view === "form") return renderFormView();
+  if (route.view === "farms") return renderFarmsView();
   if (route.view === "detail" && activePlot) return renderDetailView(activePlot);
   if (route.view === "alerts") return renderAlertsView();
   return renderDashboardView();
+}
+
+function renderFarmsView() {
+  const farms = getPortfolioFarms();
+  const plots = getPortfolioPlots();
+
+  return `
+    <div class="workspace-grid">
+      <section class="panel">
+        <div class="list-head">
+          <div>
+            <span class="eyebrow">Entrada por fazenda</span>
+            <h3>Escolha a fazenda antes do talhao</h3>
+            <p>Esse caminho ajuda o agronomo a entrar pela propriedade, ver o resumo dela e depois abrir o talhao certo.</p>
+          </div>
+          <span class="chip"><strong>${farms.length}</strong> fazendas nesta carteira</span>
+        </div>
+      </section>
+
+      <section class="plot-list-panel">
+        <div class="plot-list">
+          ${
+            farms.length
+              ? farms
+                  .map((farm) => {
+                    const farmPlots = plots
+                      .filter((plot) => plot.farmId === farm.id || plot.farmName === farm.name)
+                      .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+                    const criticalPlot = getMostCriticalPlot(farmPlots) || farmPlots[0] || null;
+                    return `
+                      <article class="panel farm-card">
+                        <div class="plot-head">
+                          <div>
+                            <span class="plot-name">${farm.name}</span>
+                            <div class="plot-meta">
+                              <span>${farm.municipality || "Municipio nao informado"}</span>
+                              <span>•</span>
+                              <span>${farm.plotCount || farmPlots.length} areas</span>
+                              <span>•</span>
+                              <span>${Number(farm.areaTotal || farm.area_total || farmPlots.reduce((sum, plot) => sum + plot.hectares, 0)).toFixed(0)} ha</span>
+                            </div>
+                          </div>
+                          <span class="chip"><strong>${countRedAlertsForPlots(farmPlots)}</strong> urgentes</span>
+                        </div>
+
+                        <div class="micro-list" style="margin-top: 18px;">
+                          ${
+                            farmPlots.length
+                              ? farmPlots
+                                  .slice(0, 4)
+                                  .map((plot) => {
+                                    const scene = getLatestSnapshot(plot);
+                                    return `
+                                      <a class="micro-item micro-item-link" href="#/talhao/${plot.id}">
+                                        <span class="micro-swatch" style="background: ${severityGradient(severityFromStatus(scene.status))};"></span>
+                                        <div class="micro-copy">
+                                          <strong>${plot.name}</strong>
+                                          <p>${describeHealthIndex(scene.ndvi)}</p>
+                                        </div>
+                                        <div class="micro-time">${statusLabel(scene.status)}</div>
+                                      </a>
+                                    `;
+                                  })
+                                  .join("")
+                              : `<div class="history-item"><div class="history-copy"><strong>Sem talhoes ainda</strong><p>Cadastre a primeira area dessa fazenda para comecar o monitoramento.</p></div></div>`
+                          }
+                        </div>
+
+                        <div class="card-actions" style="margin-top: 18px;">
+                          ${
+                            criticalPlot
+                              ? `<a class="button-secondary" href="#/talhao/${criticalPlot.id}">Abrir area mais importante</a>`
+                              : `<a class="button-secondary" href="#/cadastro">Cadastrar primeira area</a>`
+                          }
+                          <a class="button-secondary" href="#/talhoes">Ver todas as areas</a>
+                        </div>
+                      </article>
+                    `;
+                  })
+                  .join("")
+              : renderEmptyState("Nenhuma fazenda cadastrada", "Cadastre a primeira fazenda e os talhoes dela para organizar a carteira por propriedade.")
+          }
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderDashboardView() {
@@ -2366,10 +2474,21 @@ function renderPointEditorRow(point, index) {
 }
 
 function renderSceneImagePanel(scene) {
-  if (scene.imageDataUrl) {
+  if (scene.imageDataUrl || scene.ndviImageDataUrl) {
     return `
       <div class="scene-image-shell" style="margin-top: 18px;">
-        <img class="scene-image-preview" src="${scene.imageDataUrl}" alt="Imagem real da analise do talhao" />
+        <div class="scene-image-grid">
+          ${
+            scene.imageDataUrl
+              ? `<figure class="scene-image-card"><img class="scene-image-preview" src="${scene.imageDataUrl}" alt="Imagem real da analise do talhao" /><figcaption>Foto real da cena</figcaption></figure>`
+              : ""
+          }
+          ${
+            scene.ndviImageDataUrl
+              ? `<figure class="scene-image-card"><img class="scene-image-preview" src="${scene.ndviImageDataUrl}" alt="Camada visual de NDVI da analise do talhao" /><figcaption>NDVI visual da mesma cena</figcaption></figure>`
+              : ""
+          }
+        </div>
         <div class="scene-image-copy">
           <strong>${escapeHtml(scene.analysisSource || "Imagem real carregada")}</strong>
           <p>${escapeHtml(scene.imageNote || "Imagem real usada como apoio visual para esta analise.")}</p>
@@ -3646,6 +3765,11 @@ function getPortfolioAlerts() {
   return state.alerts.filter((alert) => plotIds.has(alert.plotId));
 }
 
+function countRedAlertsForPlots(plots) {
+  const plotIds = new Set((plots || []).map((plot) => plot.id));
+  return getPortfolioAlerts().filter((alert) => plotIds.has(alert.plotId) && alert.severity === "Alta").length;
+}
+
 function getFilteredPlots() {
   const query = normalizeText(state.filters.plotQuery);
   return getPortfolioPlots().filter((plot) => {
@@ -4461,6 +4585,15 @@ function iconGrid() {
       <rect x="14" y="4" width="6" height="6" rx="1.6" stroke="currentColor" stroke-width="1.7"></rect>
       <rect x="4" y="14" width="6" height="6" rx="1.6" stroke="currentColor" stroke-width="1.7"></rect>
       <rect x="14" y="14" width="6" height="6" rx="1.6" stroke="currentColor" stroke-width="1.7"></rect>
+    </svg>
+  `;
+}
+
+function iconBarn() {
+  return `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-4v-5h-6v5H5a1 1 0 0 1-1-1z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+      <path d="M9 10h6M12 4v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
     </svg>
   `;
 }
