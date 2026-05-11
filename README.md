@@ -33,19 +33,6 @@ O projeto hoje funciona como um MVP local com:
 - [data/seed_state.json](C:/Users/guica/.gemini/antigravity/scratch/Agro-main/Agro-main/data/seed_state.json)
 - `data/camposat.db` (gerado em runtime com usuarios, fazendas, talhoes e alertas)
 
-## Como rodar
-
-No PowerShell:
-
-```powershell
-cd "C:\Users\guica\.gemini\antigravity\scratch\Agro-main\Agro-main"
-python server.py --port 8000
-```
-
-Depois abra:
-
-- [http://127.0.0.1:8000](http://127.0.0.1:8000)
-
 ## Ativar Sentinel Hub
 
 Para ligar imagem real e NDVI real por talhao:
