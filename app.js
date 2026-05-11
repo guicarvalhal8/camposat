@@ -964,23 +964,24 @@ function mountFormMap(route) {
     updateFormMapLayers();
   });
 
-  if (state.form.geometryMode === "draw") {
-    formMap.on("click", (event) => {
-      state.form.points = [
-        ...state.form.points,
-        [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))]
-      ];
-      state.form.error = null;
-      const geometry = getDrawnGeometry();
-      if (geometry) {
-        syncDraftCenterFromGeometry(geometry);
-      } else {
-        state.form.mapCenter = { lat: event.lngLat.lat, lon: event.lngLat.lng };
-        state.form.mapZoom = Math.max(formMap.getZoom(), 14.5);
-      }
-      render();
-    });
-  }
+  formMap.on("click", (event) => {
+    const candidate = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
+    const snappedPoint = getSnappedGeometryPoint(candidate);
+    const nextPoint = snappedPoint || candidate;
+    state.form.points = [...state.form.points, nextPoint];
+    state.form.error = null;
+    const geometry = geometryFromPoints(state.form.points);
+    if (geometry) {
+      syncDraftCenterFromGeometry(geometry);
+    } else {
+      state.form.mapCenter = { lat: event.lngLat.lat, lon: event.lngLat.lng };
+      state.form.mapZoom = Math.max(formMap.getZoom(), 14.5);
+    }
+    if (snappedPoint) {
+      pushToast("Ponto encaixado", "O clique foi aproximado para a borda inicial para fechar melhor o contorno.");
+    }
+    render();
+  });
 
   formMap.on("moveend", () => {
     if (!formMap) return;
@@ -988,6 +989,17 @@ function mountFormMap(route) {
     state.form.mapCenter = { lat: centerPoint.lat, lon: centerPoint.lng };
     state.form.mapZoom = formMap.getZoom();
   });
+}
+
+function getSnappedGeometryPoint(candidate) {
+  if (!formMap || state.form.points.length < 3) return null;
+  const firstPoint = state.form.points[0];
+  const projectedCandidate = formMap.project(candidate);
+  const projectedFirst = formMap.project(firstPoint);
+  const dx = projectedCandidate.x - projectedFirst.x;
+  const dy = projectedCandidate.y - projectedFirst.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  return distance <= 18 ? [...firstPoint] : null;
 }
 
 function updateFormMapLayers() {
@@ -1083,7 +1095,7 @@ function updateFormMapLayers() {
   state.form.points.forEach((coordinate, index) => {
     const element = document.createElement("button");
     element.type = "button";
-    element.className = "geometry-point-marker";
+    element.className = `geometry-point-marker ${index === 0 ? "first-point" : ""}`;
     element.textContent = String(index + 1);
     element.setAttribute("aria-label", `Ponto ${index + 1} do talhao`);
 
@@ -2063,8 +2075,8 @@ function renderFormView() {
               <div class="geometry-import-shell">
                 <div class="field-group full">
                   <label for="plot-geometry-file">Arquivo do talhao</label>
-                  <input id="plot-geometry-file" name="geometryFile" type="file" accept=".geojson,.json,.kml,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml" />
-                  <p class="tiny">Voce pode enviar um arquivo `.geojson`, `.json` ou `.kml`.</p>
+                  <input id="plot-geometry-file" name="geometryFile" type="file" accept=".geojson,.json,.kml,.zip,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/zip" />
+                  <p class="tiny">Voce pode enviar um arquivo `.geojson`, `.json`, `.kml` ou um `.zip` com o Shapefile.</p>
                 </div>
                 <div class="field-group full">
                   <label for="plot-geometry-text">GeoJSON ou KML do talhao</label>
@@ -2080,6 +2092,18 @@ function renderFormView() {
                       <p class="metric-help">${geometrySummary}</p>
                     </div>
                     <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada.</p>
+                  </div>
+                </div>
+                <div class="geometry-point-list">
+                  <div class="list-head">
+                    <div>
+                      <span class="eyebrow">Pontos importados</span>
+                      <h3>Revise o contorno antes de salvar</h3>
+                      <p>Se precisar, ajuste coordenadas, remova pontos ou arraste os marcadores no mapa.</p>
+                    </div>
+                  </div>
+                  <div class="point-editor-list">
+                    ${state.form.points.length ? state.form.points.map(renderPointEditorRow).join("") : renderEmptyState("Ainda nao ha contorno carregado", "Envie um arquivo ou cole o texto do poligono para ver os pontos aqui.")}
                   </div>
                 </div>
               </div>
@@ -2333,9 +2357,19 @@ function getDrawnGeometry() {
   };
 }
 
+function geometryFromPoints(points) {
+  if (!Array.isArray(points) || points.length < 3) return null;
+  return {
+    type: "Polygon",
+    coordinates: [closeRing(points)]
+  };
+}
+
 function getDraftGeometry() {
   if (state.form.geometryMode === "draw") return getDrawnGeometry();
-  if (state.form.geometryMode === "import") return parseImportedGeometry(state.form.importText);
+  if (state.form.geometryMode === "import") {
+    return geometryFromPoints(state.form.points) || parseImportedGeometry(state.form.importText);
+  }
   return null;
 }
 
@@ -2364,6 +2398,34 @@ function syncDraftCenterFromGeometry(geometry) {
   state.form.draft.lon = center.lon.toFixed(6);
   state.form.mapCenter = { lat: center.lat, lon: center.lon };
   state.form.mapZoom = 15.8;
+}
+
+function syncPointsFromGeometry(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  state.form.points = ring.length > 1 ? ring.slice(0, -1).map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])]) : [];
+}
+
+function isShapeZipFile(file) {
+  return /\.zip$/i.test(file?.name || "");
+}
+
+function isRawShapeFile(file) {
+  return /\.shp$/i.test(file?.name || "");
+}
+
+async function readGeometryFile(file) {
+  if (isRawShapeFile(file)) {
+    throw new Error("Envie o Shapefile em um .zip contendo .shp, .dbf e .prj.");
+  }
+  if (isShapeZipFile(file)) {
+    if (typeof window.shp !== "function") {
+      throw new Error("A biblioteca de Shapefile nao carregou. Tente novamente em alguns segundos.");
+    }
+    const buffer = await file.arrayBuffer();
+    const parsed = await window.shp(buffer);
+    return JSON.stringify(parsed);
+  }
+  return readFileAsText(file);
 }
 
 function renderMarketCards() {
@@ -2496,7 +2558,7 @@ async function handleClick(event) {
     const index = Number(removeGeometryPointButton.dataset.pointIndex);
     if (Number.isInteger(index) && index >= 0) {
       state.form.points = state.form.points.filter((_, currentIndex) => currentIndex !== index);
-      const geometry = getDrawnGeometry();
+      const geometry = geometryFromPoints(state.form.points);
       if (geometry) syncDraftCenterFromGeometry(geometry);
       state.form.error = null;
       render();
@@ -2607,14 +2669,17 @@ async function handleChange(event) {
       const [file] = event.target.files || [];
       if (!file) return;
       try {
-        state.form.importText = await readFileAsText(file);
+        state.form.importText = await readGeometryFile(file);
         state.form.draft.geometryText = state.form.importText;
         state.form.geometryMode = "import";
         state.form.error = null;
         const geometry = getDraftGeometry();
-        if (geometry) syncDraftCenterFromGeometry(geometry);
+        if (geometry) {
+          syncPointsFromGeometry(geometry);
+          syncDraftCenterFromGeometry(geometry);
+        }
       } catch (error) {
-        state.form.error = "Nao foi possivel ler o arquivo enviado.";
+        state.form.error = error.message || "Nao foi possivel ler o arquivo enviado.";
       }
       render();
       return;
@@ -2640,8 +2705,10 @@ async function handleChange(event) {
       state.form.error = null;
       const geometry = getDraftGeometry();
       if (geometry) {
+        syncPointsFromGeometry(geometry);
         syncDraftCenterFromGeometry(geometry);
       }
+      render();
     }
     return;
   }

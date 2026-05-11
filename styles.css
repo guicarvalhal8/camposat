@@ -1079,6 +1079,10 @@ optgroup {
   cursor: grabbing;
 }
 
+.geometry-point-marker.first-point {
+  background: linear-gradient(135deg, #ffb55c, #ffe07a);
+}
+
 .geometry-draw-meta {
   display: flex;
   flex-direction: column;
