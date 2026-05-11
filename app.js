@@ -2475,6 +2475,7 @@ function renderPointEditorRow(point, index) {
 }
 
 function renderSceneImagePanel(scene) {
+  const satelliteProvider = state.providers?.satellite || null;
   if (scene.imageDataUrl || scene.ndviImageDataUrl) {
     return `
       <div class="scene-image-shell" style="margin-top: 18px;">
@@ -2493,6 +2494,7 @@ function renderSceneImagePanel(scene) {
         <div class="scene-image-copy">
           <strong>${escapeHtml(scene.analysisSource || "Imagem real carregada")}</strong>
           <p>${escapeHtml(scene.imageNote || "Imagem real usada como apoio visual para esta analise.")}</p>
+          ${satelliteProvider?.note ? `<p class="tiny">${escapeHtml(satelliteProvider.note)}</p>` : ""}
         </div>
       </div>
     `;
@@ -2502,6 +2504,7 @@ function renderSceneImagePanel(scene) {
       <div class="scene-image-copy">
         <strong>${escapeHtml(scene.analysisSource || "Fluxo local do CampoSat")}</strong>
         <p>${escapeHtml(scene.imageNote || "Ainda nao ha imagem real vinculada a esta analise.")}</p>
+        ${satelliteProvider?.note ? `<p class="tiny">${escapeHtml(satelliteProvider.note)}</p>` : ""}
       </div>
     </div>
   `;

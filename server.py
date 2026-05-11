@@ -353,7 +353,18 @@ def seed_market_snapshot():
 
 
 def seed_providers():
-    return load_seed_state()["providers"]
+    providers = copy.deepcopy(load_seed_state()["providers"])
+    satellite = providers.get("satellite", {})
+    satellite["name"] = "Sentinel Hub"
+    satellite["mode"] = "real-preview" if REGISTRY.satellite_images.enabled else "aguardando-credencial"
+    satellite["status"] = "ready" if REGISTRY.satellite_images.enabled else "pending"
+    satellite["note"] = (
+        "Credenciais encontradas. O app pode buscar cena real e NDVI do talhao."
+        if REGISTRY.satellite_images.enabled
+        else "Falta configurar SENTINELHUB_CLIENT_ID e SENTINELHUB_CLIENT_SECRET no .env.local."
+    )
+    providers["satellite"] = satellite
+    return providers
 
 
 def next_plot_id(connection):
@@ -717,7 +728,12 @@ class SentinelHubImageProvider:
 
     @property
     def enabled(self):
-        return bool(self.client_id and self.client_secret)
+        return bool(
+            self.client_id
+            and self.client_secret
+            and "cole_seu" not in self.client_id.lower()
+            and "cole_seu" not in self.client_secret.lower()
+        )
 
     def _get_token(self):
         if not self.enabled:
@@ -1411,7 +1427,16 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
 
         if parsed.path == "/api/health":
-            self.send_json({"ok": True, "time": now_label()})
+            self.send_json(
+                {
+                    "ok": True,
+                    "time": now_label(),
+                    "integrations": {
+                        "sentinelHubConfigured": REGISTRY.satellite_images.enabled,
+                        "envFilePresent": ENV_PATH.exists(),
+                    },
+                }
+            )
             return
 
         if parsed.path == "/api/auth/session":
