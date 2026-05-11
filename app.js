@@ -52,6 +52,7 @@ const state = {
     geometryMode: "auto",
     geometryOrigin: "auto",
     suggestionMeta: null,
+    selectedGeometryFileName: "",
     points: [],
     pointHistoryPast: [],
     pointHistoryFuture: [],
@@ -2317,6 +2318,7 @@ function renderFormView() {
                   <button class="button-secondary" type="button" data-action="pick-geometry-file">Selecionar arquivo</button>
                   <button class="button-secondary" type="button" data-action="set-geometry-mode" data-mode="import">Revisar importacao</button>
                 </div>
+                ${state.form.selectedGeometryFileName ? `<p class="tiny geometry-file-name">Arquivo escolhido: <strong>${escapeHtml(state.form.selectedGeometryFileName)}</strong></p>` : ""}
                 <p class="tiny">Se o card "Importar arquivo" nao responder no navegador, use este campo direto. Assim que o arquivo entrar, o app abre a revisao do contorno automaticamente.</p>
               </div>
             </div>
@@ -2604,6 +2606,7 @@ function loadPlotIntoForm(plot) {
   state.form.geometryMode = plot.geometry ? "draw" : "auto";
   state.form.geometryOrigin = plot.geometry ? "manual" : "auto";
   state.form.suggestionMeta = null;
+  state.form.selectedGeometryFileName = "";
   state.form.points = [];
   state.form.pointHistoryPast = [];
   state.form.pointHistoryFuture = [];
@@ -2637,6 +2640,7 @@ function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getAc
   state.form.geometryMode = "auto";
   state.form.geometryOrigin = "auto";
   state.form.suggestionMeta = null;
+  state.form.selectedGeometryFileName = "";
   state.form.points = [];
   state.form.pointHistoryPast = [];
   state.form.pointHistoryFuture = [];
@@ -3508,6 +3512,7 @@ async function handleChange(event) {
       const [file] = event.target.files || [];
       if (!file) return;
       try {
+        state.form.selectedGeometryFileName = file.name || "";
         state.form.importText = await readGeometryFile(file);
         state.form.draft.geometryText = state.form.importText;
         state.form.geometryMode = "import";
@@ -3522,6 +3527,7 @@ async function handleChange(event) {
           syncDraftCenterFromGeometry(geometry);
         }
       } catch (error) {
+        state.form.selectedGeometryFileName = "";
         state.form.error = error.message || "Nao foi possivel ler o arquivo enviado.";
       }
       render();
