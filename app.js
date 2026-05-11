@@ -1673,6 +1673,19 @@ function renderFarmsView() {
         </div>
       </section>
 
+      <section class="panel">
+        <div class="panel-header">
+          <div>
+            <span class="eyebrow">Mercado</span>
+            <h3>Precos acompanhados hoje</h3>
+            <p>Por enquanto, o Mercado mostra apenas referencias de Goias. Depois, podemos expandir esse acompanhamento para outras regioes e outras culturas.</p>
+          </div>
+        </div>
+        <div class="commodity-grid" style="margin-top: 18px;">
+          ${renderMarketCards()}
+        </div>
+      </section>
+
       <section class="plot-list-panel">
         <div class="plot-list">
           ${
