@@ -785,6 +785,8 @@ function mountDetailMap(route, activePlot) {
     style: buildMapStyle(layers),
     center: [activePlot.center.lon, activePlot.center.lat],
     zoom: 15.6,
+    maxZoom: 18.2,
+    minZoom: 3.6,
     pitch: layers.rgb ? 42 : 14,
     bearing: geometry.bearing,
     attributionControl: false
@@ -964,6 +966,8 @@ function mountFormMap(route) {
     style: buildMapStyle({ rgb: false }),
     center,
     zoom: state.form.mapZoom || ((Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)) ? 14.5 : 4.4),
+    maxZoom: 18.2,
+    minZoom: 3.6,
     attributionControl: false
   });
 
@@ -1984,7 +1988,7 @@ function renderDetailView(plot) {
           <div>
             <span class="eyebrow">Mapa do talhao</span>
             <h3>${plot.name}</h3>
-            <p>Veja a imagem do talhao, entenda a saude da lavoura e identifique o principal ponto de atencao.</p>
+            <p>Veja a imagem do talhao, entenda a saude da lavoura e identifique o principal ponto de atencao. Ao aproximar demais, a foto da area troca suavemente para o mapa de referencia para nao sumir.</p>
           </div>
           <div class="chip-row">
             <span class="chip"><strong>${plot.crop}</strong> • ${plot.hectares} ha</span>
@@ -3837,6 +3841,36 @@ function severityWeight(status) {
 }
 
 function buildMapStyle(layers) {
+  const imageryOpacity = layers.rgb
+    ? [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4,
+        1,
+        17.2,
+        1,
+        17.8,
+        0.38,
+        18.2,
+        0
+      ]
+    : 0;
+  const referenceOpacity = layers.rgb
+    ? [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4,
+        0.28,
+        17.2,
+        0.28,
+        17.8,
+        0.72,
+        18.2,
+        1
+      ]
+    : 1;
   return {
     version: 8,
     sources: {
@@ -3844,6 +3878,7 @@ function buildMapStyle(layers) {
         type: "raster",
         tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
         tileSize: 256,
+        maxzoom: 18,
         attribution: "Esri World Imagery"
       },
       osm: {
@@ -3859,7 +3894,7 @@ function buildMapStyle(layers) {
         type: "raster",
         source: "imagery",
         paint: {
-          "raster-opacity": layers.rgb ? 1 : 0
+          "raster-opacity": imageryOpacity
         }
       },
       {
@@ -3867,7 +3902,7 @@ function buildMapStyle(layers) {
         type: "raster",
         source: "osm",
         paint: {
-          "raster-opacity": layers.rgb ? 0.28 : 1
+          "raster-opacity": referenceOpacity
         }
       }
     ]
