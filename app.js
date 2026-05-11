@@ -1023,6 +1023,10 @@ function updateFormMapLayers() {
     type: "FeatureCollection",
     features: geometry ? [{ type: "Feature", properties: {}, geometry }] : []
   };
+  const maskData = {
+    type: "FeatureCollection",
+    features: geometry ? [{ type: "Feature", properties: {}, geometry: buildGeometryMask(geometry) }] : []
+  };
   const pointsData = {
     type: "FeatureCollection",
     features: points
@@ -1043,9 +1047,18 @@ function updateFormMapLayers() {
 
   if (!formMap.getSource("form-geometry-fill")) {
     formMap.addSource("form-geometry-fill", { type: "geojson", data: polygonData });
+    formMap.addSource("form-geometry-mask", { type: "geojson", data: maskData });
     formMap.addSource("form-geometry-line", { type: "geojson", data: lineData });
     formMap.addSource("form-geometry-points", { type: "geojson", data: pointsData });
 
+    formMap.addLayer({
+      id: "form-geometry-mask-layer",
+      type: "fill",
+      source: "form-geometry-mask",
+      paint: {
+        "fill-color": "rgba(3, 18, 25, 0.4)"
+      }
+    });
     formMap.addLayer({
       id: "form-geometry-fill-layer",
       type: "fill",
@@ -1065,6 +1078,17 @@ function updateFormMapLayers() {
       }
     });
     formMap.addLayer({
+      id: "form-geometry-focus-line-layer",
+      type: "line",
+      source: "form-geometry-fill",
+      paint: {
+        "line-color": "#f8fff9",
+        "line-width": 4.4,
+        "line-opacity": 0.62,
+        "line-dasharray": [1.1, 1.3]
+      }
+    });
+    formMap.addLayer({
       id: "form-geometry-points-layer",
       type: "circle",
       source: "form-geometry-points",
@@ -1077,6 +1101,7 @@ function updateFormMapLayers() {
     });
   } else {
     formMap.getSource("form-geometry-fill").setData(polygonData);
+    formMap.getSource("form-geometry-mask").setData(maskData);
     formMap.getSource("form-geometry-line").setData(lineData);
     formMap.getSource("form-geometry-points").setData(pointsData);
   }
@@ -1117,6 +1142,41 @@ function updateFormMapLayers() {
 
     formMarkers.push(marker);
   });
+
+  if (state.form.points.length >= 2) {
+    state.form.points.forEach((coordinate, index) => {
+      const nextPoint = state.form.points[(index + 1) % state.form.points.length];
+      if (!nextPoint || (state.form.points.length < 3 && index === state.form.points.length - 1)) return;
+
+      const midpoint = [
+        Number(((coordinate[0] + nextPoint[0]) / 2).toFixed(6)),
+        Number(((coordinate[1] + nextPoint[1]) / 2).toFixed(6))
+      ];
+      const element = document.createElement("button");
+      element.type = "button";
+      element.className = "geometry-edge-marker";
+      element.textContent = "+";
+      element.setAttribute("aria-label", `Inserir ponto entre P${index + 1} e P${(index + 1) % state.form.points.length + 1}`);
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const nextPoints = cloneGeometryPoints(state.form.points);
+        nextPoints.splice(index + 1, 0, midpoint);
+        applyFormPoints(nextPoints, { trackHistory: true });
+        pushToast("Ponto inserido", "Colocamos um novo ponto no meio da borda para voce refinar o contorno.");
+        render();
+      });
+
+      const marker = new window.maplibregl.Marker({
+        element,
+        draggable: false
+      })
+        .setLngLat(midpoint)
+        .addTo(formMap);
+
+      formMarkers.push(marker);
+    });
+  }
 }
 
 function getRoute() {
@@ -1743,6 +1803,7 @@ function renderDetailView(plot) {
           <div class="chip-row">
             <span class="chip"><strong>${plot.crop}</strong> • ${plot.hectares} ha</span>
             <span class="chip"><strong>Ultima imagem:</strong> ${formatDateTime(scene.capturedAt)}</span>
+            <span class="chip"><strong>Contorno:</strong> ${getGeometrySourceLabel(plot)}</span>
           </div>
         </div>
 
@@ -1818,6 +1879,7 @@ function renderDetailView(plot) {
             <span class="eyebrow">Resumo da imagem</span>
             <h3>O que foi visto nesta data</h3>
             <div class="metric-stack" style="margin-top: 18px;">
+              ${renderExplainMetric("Contorno usado na leitura", getGeometrySourceLabel(plot), describeGeometrySource(plot))}
               ${renderExplainMetric("Saude da lavoura", scene.ndvi.toFixed(2), describeHealthIndex(scene.ndvi))}
               ${renderExplainMetric("Mudanca desde a ultima imagem", `${scene.delta >= 0 ? "+" : ""}${scene.delta.toFixed(2)}`, describeDelta(scene.delta))}
               ${renderExplainMetric("Area que merece atencao", `${scene.affectedAreaHa} ha`, describeRiskArea(scene.affectedAreaHa))}
@@ -2058,7 +2120,8 @@ function renderFormView() {
                     <button class="button-secondary" type="button" data-action="suggest-geometry-points">Recorte assistido</button>
                     <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
                   </div>
-                  <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido" e depois ajuste os pontos para deixar o desenho mais fiel.</p>
+                  <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido", arraste os pontos e use os botoes + nas bordas para colocar novos pontos onde faltar detalhe.</p>
+                  <p class="tiny">Quando o contorno fecha, escurecemos a parte de fora para a borda ficar mais clara em cima da imagem.</p>
                 </div>
               </div>
               <div class="geometry-point-list">
@@ -2102,7 +2165,7 @@ function renderFormView() {
                       <button class="button-secondary" type="button" data-action="undo-geometry-point" ${state.form.pointHistoryPast.length ? "" : "disabled"}>Desfazer</button>
                       <button class="button-secondary" type="button" data-action="redo-geometry-point" ${state.form.pointHistoryFuture.length ? "" : "disabled"}>Refazer</button>
                     </div>
-                    <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada.</p>
+                    <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada. Se precisar, arraste os pontos e use os botoes + nas bordas para adicionar detalhe.</p>
                   </div>
                 </div>
                 <div class="geometry-point-list">
@@ -2384,6 +2447,25 @@ function geometryFromPoints(points) {
   return {
     type: "Polygon",
     coordinates: [closeRing(points)]
+  };
+}
+
+function buildGeometryMask(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  if (!ring.length) return null;
+  const bounds = getGeometryBounds(geometry);
+  const lonPadding = Math.max(0.006, (bounds.maxLon - bounds.minLon) * 0.85);
+  const latPadding = Math.max(0.006, (bounds.maxLat - bounds.minLat) * 0.85);
+  const outerRing = [
+    [bounds.minLon - lonPadding, bounds.minLat - latPadding],
+    [bounds.maxLon + lonPadding, bounds.minLat - latPadding],
+    [bounds.maxLon + lonPadding, bounds.maxLat + latPadding],
+    [bounds.minLon - lonPadding, bounds.maxLat + latPadding],
+    [bounds.minLon - lonPadding, bounds.minLat - latPadding]
+  ];
+  return {
+    type: "Polygon",
+    coordinates: [outerRing, closeRing(ring.slice(0, -1))]
   };
 }
 
@@ -4124,6 +4206,17 @@ function buildActionSummary(plot, scene) {
     return `Responsavel: ${plot.agronomist}. No momento nao ha area critica, mas vale manter o acompanhamento regular pelo numero ${plot.whatsapp}.`;
   }
   return `Responsavel: ${plot.agronomist}. Entre em contato pelo numero ${plot.whatsapp} e priorize a vistoria em ${scene.affectedAreaHa} ha, principalmente no ponto ${scene.hotspot.label}.`;
+}
+
+function getGeometrySourceLabel(plot) {
+  return plot.geometry?.type === "Polygon" ? "Real" : "Automatico";
+}
+
+function describeGeometrySource(plot) {
+  if (plot.geometry?.type === "Polygon") {
+    return "A leitura esta usando um contorno real desenhado ou importado para este talhao, o que ajuda a deixar a borda mais fiel.";
+  }
+  return "A leitura ainda usa um contorno automatico criado a partir do centro e do tamanho da area. Vale refinar a borda para ganhar precisao.";
 }
 
 function severityPhrase(status) {
