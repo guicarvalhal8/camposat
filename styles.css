@@ -1053,6 +1053,36 @@ optgroup {
   margin-top: 18px;
 }
 
+.geometry-map-shell {
+  position: relative;
+}
+
+.geometry-map-label {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(3, 18, 25, 0.82);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+}
+
+.geometry-map-label strong {
+  font-size: 0.96rem;
+}
+
+.geometry-map-label span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .geometry-map {
   min-height: 360px;
   border-radius: 24px;

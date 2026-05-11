@@ -49,6 +49,8 @@ const state = {
     draft: null,
     geometryMode: "auto",
     points: [],
+    pointHistoryPast: [],
+    pointHistoryFuture: [],
     importText: "",
     mapCenter: { lat: -15.8, lon: -47.9 },
     mapZoom: 4.4,
@@ -968,8 +970,7 @@ function mountFormMap(route) {
     const candidate = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
     const snappedPoint = getSnappedGeometryPoint(candidate);
     const nextPoint = snappedPoint || candidate;
-    state.form.points = [...state.form.points, nextPoint];
-    state.form.error = null;
+    applyFormPoints([...state.form.points, nextPoint], { trackHistory: true, syncCenter: false });
     const geometry = geometryFromPoints(state.form.points);
     if (geometry) {
       syncDraftCenterFromGeometry(geometry);
@@ -1090,7 +1091,7 @@ function updateFormMapLayers() {
     });
   }
 
-  if (state.form.geometryMode !== "draw") return;
+  if (!["draw", "import"].includes(state.form.geometryMode)) return;
 
   state.form.points.forEach((coordinate, index) => {
     const element = document.createElement("button");
@@ -1108,11 +1109,9 @@ function updateFormMapLayers() {
 
     marker.on("dragend", () => {
       const lngLat = marker.getLngLat();
-      state.form.points[index] = [Number(lngLat.lng.toFixed(6)), Number(lngLat.lat.toFixed(6))];
-      const nextGeometry = getDrawnGeometry();
-      if (nextGeometry) {
-        syncDraftCenterFromGeometry(nextGeometry);
-      }
+      const nextPoints = cloneGeometryPoints(state.form.points);
+      nextPoints[index] = [Number(lngLat.lng.toFixed(6)), Number(lngLat.lat.toFixed(6))];
+      applyFormPoints(nextPoints, { trackHistory: true });
       render();
     });
 
@@ -2043,7 +2042,10 @@ function renderFormView() {
 
             ${state.form.geometryMode === "draw" ? `
               <div class="geometry-draw-shell">
-                <div class="geometry-map" id="plot-geometry-map" aria-label="Mapa para desenhar o talhao"></div>
+                <div class="geometry-map-shell">
+                  <div class="geometry-map-label">${renderGeometryPreviewLabel(draft)}</div>
+                  <div class="geometry-map" id="plot-geometry-map" aria-label="Mapa para desenhar o talhao"></div>
+                </div>
                 <div class="geometry-draw-meta">
                   <div class="metric-box">
                     <span class="metric-label">Pontos marcados</span>
@@ -2051,10 +2053,12 @@ function renderFormView() {
                     <p class="metric-help">${geometrySummary}</p>
                   </div>
                   <div class="panel-actions">
-                    <button class="button-secondary" type="button" data-action="undo-geometry-point">Desfazer ultimo ponto</button>
+                    <button class="button-secondary" type="button" data-action="undo-geometry-point" ${state.form.pointHistoryPast.length ? "" : "disabled"}>Desfazer</button>
+                    <button class="button-secondary" type="button" data-action="redo-geometry-point" ${state.form.pointHistoryFuture.length ? "" : "disabled"}>Refazer</button>
+                    <button class="button-secondary" type="button" data-action="suggest-geometry-points">Recorte assistido</button>
                     <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
                   </div>
-                  <p class="tiny">Dica: clique ao redor da borda do talhao. Depois disso, arraste os pontos para alinhar melhor o contorno com a imagem.</p>
+                  <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido" e depois ajuste os pontos para deixar o desenho mais fiel.</p>
                 </div>
               </div>
               <div class="geometry-point-list">
@@ -2084,12 +2088,19 @@ function renderFormView() {
                   <p class="tiny">Aceita Polygon, Feature, FeatureCollection e tambem KML com Polygon. O sistema usa o primeiro poligono valido encontrado.</p>
                 </div>
                 <div class="geometry-preview-shell">
-                  <div class="geometry-map" id="plot-geometry-preview-map" aria-label="Preview do talhao importado"></div>
+                  <div class="geometry-map-shell">
+                    <div class="geometry-map-label">${renderGeometryPreviewLabel(draft)}</div>
+                    <div class="geometry-map" id="plot-geometry-preview-map" aria-label="Preview do talhao importado"></div>
+                  </div>
                   <div class="geometry-draw-meta">
                     <div class="metric-box">
                       <span class="metric-label">Preview da importacao</span>
                       <span class="metric-value">${geometry ? "Pronto" : "Aguardando"}</span>
                       <p class="metric-help">${geometrySummary}</p>
+                    </div>
+                    <div class="panel-actions">
+                      <button class="button-secondary" type="button" data-action="undo-geometry-point" ${state.form.pointHistoryPast.length ? "" : "disabled"}>Desfazer</button>
+                      <button class="button-secondary" type="button" data-action="redo-geometry-point" ${state.form.pointHistoryFuture.length ? "" : "disabled"}>Refazer</button>
                     </div>
                     <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada.</p>
                   </div>
@@ -2205,6 +2216,15 @@ function renderPointEditorRow(point, index) {
   `;
 }
 
+function renderGeometryPreviewLabel(draft) {
+  const farmName = String(draft.farmName || "Fazenda sem nome").trim();
+  const plotName = String(draft.plotName || "Talhao em edicao").trim();
+  return `
+    <strong>${escapeHtml(plotName)}</strong>
+    <span>${escapeHtml(farmName)}</span>
+  `;
+}
+
 function ensureFormDraft(currentUser, activeAgronomist) {
   if (!state.form.draft) {
     state.form.draft = {
@@ -2242,6 +2262,8 @@ function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getAc
   };
   state.form.geometryMode = "auto";
   state.form.points = [];
+  state.form.pointHistoryPast = [];
+  state.form.pointHistoryFuture = [];
   state.form.importText = "";
   state.form.error = null;
   state.form.mapCenter = { lat: -15.8, lon: -47.9 };
@@ -2363,6 +2385,95 @@ function geometryFromPoints(points) {
     type: "Polygon",
     coordinates: [closeRing(points)]
   };
+}
+
+function cloneGeometryPoints(points) {
+  return Array.isArray(points) ? points.map((point) => [Number(point[0]), Number(point[1])]) : [];
+}
+
+function haveSameGeometryPoints(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((point, index) => Number(point[0]) === Number(right[index][0]) && Number(point[1]) === Number(right[index][1]));
+}
+
+function pushGeometryHistorySnapshot(snapshot = state.form.points) {
+  const cloned = cloneGeometryPoints(snapshot);
+  const lastSnapshot = state.form.pointHistoryPast[state.form.pointHistoryPast.length - 1];
+  if (lastSnapshot && haveSameGeometryPoints(lastSnapshot, cloned)) return;
+  state.form.pointHistoryPast = [...state.form.pointHistoryPast, cloned].slice(-40);
+  state.form.pointHistoryFuture = [];
+}
+
+function applyFormPoints(nextPoints, options = {}) {
+  const normalizedPoints = cloneGeometryPoints(nextPoints);
+  const trackHistory = Boolean(options.trackHistory);
+  if (trackHistory && !haveSameGeometryPoints(state.form.points, normalizedPoints)) {
+    pushGeometryHistorySnapshot(state.form.points);
+  }
+  state.form.points = normalizedPoints;
+  if (options.syncCenter !== false) {
+    const geometry = geometryFromPoints(state.form.points);
+    if (geometry) {
+      syncDraftCenterFromGeometry(geometry);
+    }
+  }
+  state.form.error = null;
+}
+
+function undoGeometryPoints() {
+  const previous = state.form.pointHistoryPast[state.form.pointHistoryPast.length - 1];
+  if (!previous) return false;
+  state.form.pointHistoryPast = state.form.pointHistoryPast.slice(0, -1);
+  state.form.pointHistoryFuture = [...state.form.pointHistoryFuture, cloneGeometryPoints(state.form.points)].slice(-40);
+  state.form.points = cloneGeometryPoints(previous);
+  const geometry = geometryFromPoints(state.form.points);
+  if (geometry) syncDraftCenterFromGeometry(geometry);
+  state.form.error = null;
+  return true;
+}
+
+function redoGeometryPoints() {
+  const next = state.form.pointHistoryFuture[state.form.pointHistoryFuture.length - 1];
+  if (!next) return false;
+  state.form.pointHistoryFuture = state.form.pointHistoryFuture.slice(0, -1);
+  state.form.pointHistoryPast = [...state.form.pointHistoryPast, cloneGeometryPoints(state.form.points)].slice(-40);
+  state.form.points = cloneGeometryPoints(next);
+  const geometry = geometryFromPoints(state.form.points);
+  if (geometry) syncDraftCenterFromGeometry(geometry);
+  state.form.error = null;
+  return true;
+}
+
+function getDraftCenterPoint() {
+  ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  const lat = Number(state.form.draft.lat);
+  const lon = Number(state.form.draft.lon);
+  if (Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0)) {
+    return { lat, lon };
+  }
+  return { lat: state.form.mapCenter.lat, lon: state.form.mapCenter.lon };
+}
+
+function buildSuggestedGeometryPoints() {
+  const draft = ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  const center = getDraftCenterPoint();
+  const seed = hashPlotSeed(`${draft.plotName}-${draft.farmName}-${draft.hectares}-${draft.municipality}`);
+  const areaM2 = Math.max(12000, Number(draft.hectares || 0) * 10000 || 22000);
+  const aspect = 1.04 + (seed % 4) * 0.13;
+  const widthMeters = Math.sqrt(areaM2 * aspect);
+  const heightMeters = areaM2 / widthMeters;
+  const halfWidth = widthMeters / 2;
+  const halfHeight = heightMeters / 2;
+  const inset = Math.min(widthMeters, heightMeters) * 0.1;
+  const bearing = -22 + (seed % 9) * 6;
+  const ring = [
+    [-halfWidth + inset * 0.65, -halfHeight + inset * 0.95],
+    [halfWidth - inset * 0.55, -halfHeight + inset * 0.55],
+    [halfWidth - inset * 0.9, halfHeight - inset * 1.1],
+    [-halfWidth + inset * 1.2, halfHeight - inset * 0.7],
+    [-halfWidth + inset * 0.65, -halfHeight + inset * 0.95]
+  ];
+  return localRingToCoordinates(center, ring, bearing).slice(0, -1).map((coordinate) => [Number(coordinate[0].toFixed(6)), Number(coordinate[1].toFixed(6))]);
 }
 
 function getDraftGeometry() {
@@ -2531,24 +2642,36 @@ async function handleClick(event) {
     if (state.form.geometryMode !== "draw") {
       state.form.points = state.form.geometryMode === "import" ? state.form.points : [];
     }
+    state.form.pointHistoryPast = [];
+    state.form.pointHistoryFuture = [];
     render();
     return;
   }
 
   const undoGeometryPointButton = event.target.closest("[data-action='undo-geometry-point']");
   if (undoGeometryPointButton) {
-    state.form.points = state.form.points.slice(0, -1);
-    state.form.error = null;
-    const geometry = getDrawnGeometry();
-    if (geometry) syncDraftCenterFromGeometry(geometry);
+    if (undoGeometryPoints()) render();
+    return;
+  }
+
+  const redoGeometryPointButton = event.target.closest("[data-action='redo-geometry-point']");
+  if (redoGeometryPointButton) {
+    if (redoGeometryPoints()) render();
+    return;
+  }
+
+  const suggestGeometryPointsButton = event.target.closest("[data-action='suggest-geometry-points']");
+  if (suggestGeometryPointsButton) {
+    const suggestedPoints = buildSuggestedGeometryPoints();
+    applyFormPoints(suggestedPoints, { trackHistory: true });
+    pushToast("Recorte assistido pronto", "Montamos um desenho inicial para voce ajustar em cima da imagem.");
     render();
     return;
   }
 
   const clearGeometryPointsButton = event.target.closest("[data-action='clear-geometry-points']");
   if (clearGeometryPointsButton) {
-    state.form.points = [];
-    state.form.error = null;
+    applyFormPoints([], { trackHistory: true, syncCenter: false });
     render();
     return;
   }
@@ -2557,10 +2680,10 @@ async function handleClick(event) {
   if (removeGeometryPointButton) {
     const index = Number(removeGeometryPointButton.dataset.pointIndex);
     if (Number.isInteger(index) && index >= 0) {
-      state.form.points = state.form.points.filter((_, currentIndex) => currentIndex !== index);
-      const geometry = geometryFromPoints(state.form.points);
-      if (geometry) syncDraftCenterFromGeometry(geometry);
-      state.form.error = null;
+      applyFormPoints(
+        state.form.points.filter((_, currentIndex) => currentIndex !== index),
+        { trackHistory: true }
+      );
       render();
     }
     return;
@@ -2673,6 +2796,8 @@ async function handleChange(event) {
         state.form.draft.geometryText = state.form.importText;
         state.form.geometryMode = "import";
         state.form.error = null;
+        state.form.pointHistoryPast = [];
+        state.form.pointHistoryFuture = [];
         const geometry = getDraftGeometry();
         if (geometry) {
           syncPointsFromGeometry(geometry);
@@ -2689,10 +2814,12 @@ async function handleChange(event) {
       const axis = event.target.dataset.axis;
       const numericValue = Number(value);
       if (Number.isInteger(index) && Number.isFinite(numericValue) && state.form.points[index]) {
+        pushGeometryHistorySnapshot();
         const nextPoint = [...state.form.points[index]];
         nextPoint[axis === "lat" ? 1 : 0] = Number(numericValue.toFixed(6));
         state.form.points[index] = nextPoint;
-        const geometry = getDrawnGeometry();
+        state.form.pointHistoryFuture = [];
+        const geometry = geometryFromPoints(state.form.points);
         if (geometry) syncDraftCenterFromGeometry(geometry);
         state.form.error = null;
       }
@@ -2705,6 +2832,8 @@ async function handleChange(event) {
       state.form.error = null;
       const geometry = getDraftGeometry();
       if (geometry) {
+        state.form.pointHistoryPast = [];
+        state.form.pointHistoryFuture = [];
         syncPointsFromGeometry(geometry);
         syncDraftCenterFromGeometry(geometry);
       }
@@ -2722,15 +2851,6 @@ function handleInput(event) {
   const { name, value } = event.target;
   ensureFormDraft(getCurrentUser(), getActiveAgronomist());
   if (event.target.dataset.action === "edit-geometry-point") {
-    const index = Number(event.target.dataset.pointIndex);
-    const axis = event.target.dataset.axis;
-    const numericValue = Number(value);
-    if (Number.isInteger(index) && Number.isFinite(numericValue) && state.form.points[index]) {
-      const nextPoint = [...state.form.points[index]];
-      nextPoint[axis === "lat" ? 1 : 0] = Number(numericValue.toFixed(6));
-      state.form.points[index] = nextPoint;
-      state.form.error = null;
-    }
     return;
   }
   state.form.draft[name] = value;
