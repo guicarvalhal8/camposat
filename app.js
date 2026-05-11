@@ -2309,6 +2309,18 @@ function renderFormView() {
               ${renderGeometryModeButton("import", "Importar arquivo", "Cole o contorno real em GeoJSON ou KML.", state.form.geometryMode)}
             </div>
 
+            <div class="geometry-file-shortcut">
+              <div class="field-group full">
+                <label for="plot-geometry-file">Arquivo do talhao</label>
+                <input id="plot-geometry-file" class="geometry-file-input" name="geometryFile" type="file" accept=".geojson,.json,.kml,.zip,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/zip" />
+                <div class="panel-actions geometry-file-actions">
+                  <button class="button-secondary" type="button" data-action="pick-geometry-file">Selecionar arquivo</button>
+                  <button class="button-secondary" type="button" data-action="set-geometry-mode" data-mode="import">Revisar importacao</button>
+                </div>
+                <p class="tiny">Se o card "Importar arquivo" nao responder no navegador, use este campo direto. Assim que o arquivo entrar, o app abre a revisao do contorno automaticamente.</p>
+              </div>
+            </div>
+
             ${state.form.geometryMode === "draw" ? `
               <div class="geometry-draw-shell">
                 <div class="geometry-map-shell">
@@ -2349,14 +2361,18 @@ function renderFormView() {
 
             ${state.form.geometryMode === "import" ? `
               <div class="geometry-import-shell">
-                <div class="field-group full">
-                  <label for="plot-geometry-file">Arquivo do talhao</label>
-                  <input id="plot-geometry-file" class="geometry-file-input" name="geometryFile" type="file" accept=".geojson,.json,.kml,.zip,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/zip" />
+                <div class="geometry-import-head">
+                  <div class="list-head">
+                    <div>
+                      <span class="eyebrow">Revisao do arquivo</span>
+                      <h3>Confira o contorno importado</h3>
+                      <p>Depois de escolher o arquivo, revise o desenho no mapa e ajuste os pontos se precisar.</p>
+                    </div>
+                  </div>
                   <div class="panel-actions geometry-file-actions">
-                    <button class="button-secondary" type="button" data-action="pick-geometry-file">Selecionar arquivo</button>
+                    <button class="button-secondary" type="button" data-action="pick-geometry-file">Trocar arquivo</button>
                     <button class="button-secondary" type="button" data-action="set-geometry-mode" data-mode="draw">Voltar para desenho</button>
                   </div>
-                  <p class="tiny">Voce pode enviar um arquivo `.geojson`, `.json`, `.kml` ou um `.zip` com o Shapefile.</p>
                 </div>
                 <div class="field-group full">
                   <label for="plot-geometry-text">GeoJSON ou KML do talhao</label>
