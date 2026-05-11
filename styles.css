@@ -1198,6 +1198,113 @@ optgroup {
   line-height: 1.5;
 }
 
+.geometry-advice-shell {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.geometry-advice-card {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(126, 217, 255, 0.18);
+  background: rgba(126, 217, 255, 0.05);
+}
+
+.geometry-advice-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.geometry-advice-head h3 {
+  margin: 6px 0 0;
+  font-size: 1.05rem;
+}
+
+.geometry-advice-copy {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.geometry-advice-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.geometry-confidence-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.geometry-confidence-pill.tone-high {
+  background: rgba(103, 241, 201, 0.12);
+  color: #baf8e8;
+  border-color: rgba(103, 241, 201, 0.24);
+}
+
+.geometry-confidence-pill.tone-medium {
+  background: rgba(255, 204, 102, 0.12);
+  color: #ffe8a8;
+  border-color: rgba(255, 204, 102, 0.22);
+}
+
+.geometry-confidence-pill.tone-low {
+  background: rgba(255, 107, 107, 0.12);
+  color: #ffd4d4;
+  border-color: rgba(255, 107, 107, 0.22);
+}
+
+.geometry-warning-list {
+  display: grid;
+  gap: 10px;
+}
+
+.geometry-warning-card {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.geometry-warning-card strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.geometry-warning-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.geometry-warning-card.tone-high {
+  border-color: rgba(255, 107, 107, 0.25);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.geometry-warning-card.tone-medium {
+  border-color: rgba(255, 204, 102, 0.22);
+  background: rgba(255, 204, 102, 0.06);
+}
+
+.geometry-warning-card.tone-low {
+  border-color: rgba(126, 217, 255, 0.18);
+  background: rgba(126, 217, 255, 0.05);
+}
+
 .field-group input:focus,
 .field-group select:focus,
 .field-group textarea:focus {

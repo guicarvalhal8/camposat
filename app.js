@@ -50,6 +50,8 @@ const state = {
     editPlotId: null,
     loadedPlotId: null,
     geometryMode: "auto",
+    geometryOrigin: "auto",
+    suggestionMeta: null,
     points: [],
     pointHistoryPast: [],
     pointHistoryFuture: [],
@@ -988,6 +990,7 @@ function mountFormMap(route) {
         const insertedPoint = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
         const nextPoints = cloneGeometryPoints(state.form.points);
         nextPoints.splice(insertionIndex + 1, 0, insertedPoint);
+        if (state.form.geometryOrigin === "auto") state.form.geometryOrigin = "manual";
         applyFormPoints(nextPoints, { trackHistory: true });
         pushToast("Ponto inserido", "Voce clicou na borda e nos colocamos um novo ponto nesse trecho.");
         render();
@@ -997,6 +1000,7 @@ function mountFormMap(route) {
     const candidate = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
     const snappedPoint = getSnappedGeometryPoint(candidate);
     const nextPoint = snappedPoint || candidate;
+    if (state.form.geometryOrigin === "auto") state.form.geometryOrigin = "manual";
     applyFormPoints([...state.form.points, nextPoint], { trackHistory: true, syncCenter: false });
     const geometry = geometryFromPoints(state.form.points);
     if (geometry) {
@@ -2224,8 +2228,12 @@ function renderFormView() {
   const currentUser = getCurrentUser();
   const draft = ensureFormDraft(currentUser, activeAgronomist);
   const geometry = getDraftGeometry();
+  const automaticSuggestionGeometry = geometryFromPoints(buildSuggestedGeometryPoints());
   const geometrySummary = getDraftGeometrySummary(geometry);
   const editing = Boolean(state.form.editPlotId);
+  const drawAdvice = state.form.points.length >= 3 ? renderSuggestionSummaryCard(draft, geometryFromPoints(state.form.points)) : "";
+  const importAdvice = geometry ? renderSuggestionSummaryCard(draft, geometry) : "";
+  const autoAdvice = automaticSuggestionGeometry ? renderSuggestionSummaryCard(draft, automaticSuggestionGeometry) : "";
   return `
     <section class="form-shell">
       <div class="panel">
@@ -2321,6 +2329,7 @@ function renderFormView() {
                   </div>
                   <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido", arraste os pontos e use os botoes + nas bordas para colocar novos pontos onde faltar detalhe.</p>
                   <p class="tiny">Quando o contorno fecha, escurecemos a parte de fora para a borda ficar mais clara em cima da imagem.</p>
+                  ${drawAdvice}
                 </div>
               </div>
               <div class="geometry-point-list">
@@ -2365,6 +2374,7 @@ function renderFormView() {
                       <button class="button-secondary" type="button" data-action="redo-geometry-point" ${state.form.pointHistoryFuture.length ? "" : "disabled"}>Refazer</button>
                     </div>
                     <p class="tiny">Antes de salvar, confira se o contorno importado bate com a area esperada. Se precisar, arraste os pontos e use os botoes + nas bordas para adicionar detalhe.</p>
+                    ${importAdvice}
                   </div>
                 </div>
                 <div class="geometry-point-list">
@@ -2387,6 +2397,7 @@ function renderFormView() {
                 <strong>Geracao automatica ativa</strong>
                 <p>Se voce nao desenhar nem importar um contorno real, o CampoSat cria um formato inicial a partir da localizacao central e do tamanho em hectares.</p>
               </div>
+              ${autoAdvice}
             ` : ""}
           </div>
 
@@ -2417,6 +2428,14 @@ function renderFormView() {
                 <p>Se houver desenho ou GeoJSON, o sistema usa o formato fiel do talhao. Sem isso, entra o formato gerado automaticamente.</p>
               </div>
               <div class="micro-time">Forma</div>
+            </div>
+            <div class="micro-item">
+              <span class="micro-swatch" style="background: linear-gradient(180deg, #7ed9ff, #67f1c9);"></span>
+              <div class="micro-copy">
+                <strong>Onde a sugestao pode errar</strong>
+                <p>Centro mal informado, hectares fora da realidade, imagem antiga, nuvem, sombra e borda parecida com o vizinho costumam ser os erros mais comuns.</p>
+              </div>
+              <div class="micro-time">Avisos</div>
             </div>
             <div class="micro-item">
               <span class="micro-swatch" style="background: linear-gradient(180deg, #ff6b6b, #ff9865);"></span>
@@ -2561,6 +2580,8 @@ function loadPlotIntoForm(plot) {
   state.form.editPlotId = plot.id;
   state.form.loadedPlotId = plot.id;
   state.form.geometryMode = plot.geometry ? "draw" : "auto";
+  state.form.geometryOrigin = plot.geometry ? "manual" : "auto";
+  state.form.suggestionMeta = null;
   state.form.points = [];
   state.form.pointHistoryPast = [];
   state.form.pointHistoryFuture = [];
@@ -2592,6 +2613,8 @@ function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getAc
   state.form.editPlotId = null;
   state.form.loadedPlotId = null;
   state.form.geometryMode = "auto";
+  state.form.geometryOrigin = "auto";
+  state.form.suggestionMeta = null;
   state.form.points = [];
   state.form.pointHistoryPast = [];
   state.form.pointHistoryFuture = [];
@@ -2809,7 +2832,7 @@ function buildSuggestedGeometryPoints() {
   const center = getDraftCenterPoint();
   const seed = hashPlotSeed(`${draft.plotName}-${draft.farmName}-${draft.hectares}-${draft.municipality}`);
   const areaM2 = Math.max(12000, Number(draft.hectares || 0) * 10000 || 22000);
-  const aspect = 1.04 + (seed % 4) * 0.13;
+  const aspect = 1.08 + (seed % 5) * 0.12;
   const widthMeters = Math.sqrt(areaM2 * aspect);
   const heightMeters = areaM2 / widthMeters;
   const halfWidth = widthMeters / 2;
@@ -2817,13 +2840,193 @@ function buildSuggestedGeometryPoints() {
   const inset = Math.min(widthMeters, heightMeters) * 0.1;
   const bearing = -22 + (seed % 9) * 6;
   const ring = [
-    [-halfWidth + inset * 0.65, -halfHeight + inset * 0.95],
-    [halfWidth - inset * 0.55, -halfHeight + inset * 0.55],
-    [halfWidth - inset * 0.9, halfHeight - inset * 1.1],
-    [-halfWidth + inset * 1.2, halfHeight - inset * 0.7],
-    [-halfWidth + inset * 0.65, -halfHeight + inset * 0.95]
+    [-halfWidth + inset * 0.78, -halfHeight + inset * 0.94],
+    [halfWidth - inset * 0.42, -halfHeight + inset * 0.48],
+    [halfWidth - inset * 0.22, -halfHeight + inset * 1.36],
+    [halfWidth - inset * 0.9, halfHeight - inset * 0.94],
+    [-halfWidth + inset * 1.16, halfHeight - inset * 0.52],
+    [-halfWidth + inset * 0.42, halfHeight - inset * 1.24],
+    [-halfWidth + inset * 0.78, -halfHeight + inset * 0.94]
   ];
   return localRingToCoordinates(center, ring, bearing).slice(0, -1).map((coordinate) => [Number(coordinate[0].toFixed(6)), Number(coordinate[1].toFixed(6))]);
+}
+
+function measureGeometryAreaHectares(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  if (ring.length < 4) return 0;
+  const unique = ring.slice(0, -1);
+  if (unique.length < 3) return 0;
+  const center = centroidFromGeometry(geometry);
+  if (!center) return 0;
+  const metersPerDegreeLat = 111320;
+  const metersPerDegreeLon = Math.max(1, 111320 * Math.cos((center.lat * Math.PI) / 180));
+  let twiceArea = 0;
+  for (let index = 0; index < unique.length; index += 1) {
+    const current = unique[index];
+    const next = unique[(index + 1) % unique.length];
+    const x1 = (Number(current[0]) - center.lon) * metersPerDegreeLon;
+    const y1 = (Number(current[1]) - center.lat) * metersPerDegreeLat;
+    const x2 = (Number(next[0]) - center.lon) * metersPerDegreeLon;
+    const y2 = (Number(next[1]) - center.lat) * metersPerDegreeLat;
+    twiceArea += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(twiceArea / 2) / 10000;
+}
+
+function buildSuggestionWarnings(draft, geometry) {
+  const lat = Number(draft.lat);
+  const lon = Number(draft.lon);
+  const expectedHa = Number(draft.hectares || 0);
+  const measuredHa = geometry ? measureGeometryAreaHectares(geometry) : 0;
+  const diffPercent = expectedHa > 0 && measuredHa > 0 ? (Math.abs(measuredHa - expectedHa) / expectedHa) * 100 : null;
+  const warnings = [];
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
+    warnings.push({
+      tone: "high",
+      title: "Centro da area pode estar deslocado",
+      text: "Sem latitude e longitude confiaveis, a sugestao pode nascer fora do talhao e puxar a borda para o lado errado."
+    });
+  }
+
+  if (!expectedHa) {
+    warnings.push({
+      tone: "high",
+      title: "Tamanho da area ainda nao ajuda no encaixe",
+      text: "Sem hectares corretos, o sistema perde a principal trava para saber ate onde o contorno deve crescer."
+    });
+  } else if (diffPercent !== null && diffPercent > 18) {
+    warnings.push({
+      tone: "high",
+      title: "O desenho sugerido ainda nao bate com os hectares",
+      text: `Hoje o contorno sugerido esta com cerca de ${measuredHa.toFixed(1)} ha, enquanto o cadastro pede ${expectedHa.toFixed(1)} ha. Vale revisar a borda com cuidado.`
+    });
+  }
+
+  warnings.push({
+    tone: "medium",
+    title: "Talhoes vizinhos parecidos podem confundir a borda",
+    text: "Quando a lavoura ao lado tem cor e textura muito parecidas, a leitura automatica pode cruzar a divisa visual."
+  });
+
+  warnings.push({
+    tone: "medium",
+    title: "Estradas, carreadores, mata ou pivô podem cortar o contorno",
+    text: "Esses elementos criam quebras na imagem e podem fazer a sugestao entrar ou sair demais em alguns trechos."
+  });
+
+  warnings.push({
+    tone: "medium",
+    title: "Imagem antiga, sombra ou nuvem reduzem a confianca",
+    text: "Se a cena nao estiver limpa ou recente, a borda da plantacao fica menos nitida e o recorte precisa de mais ajuste manual."
+  });
+
+  if (String(draft.crop || "").toLowerCase() === "milho") {
+    warnings.push({
+      tone: "low",
+      title: "Linhas do milho podem alongar a leitura",
+      text: "Em milho, o padrao das linhas pode sugerir um formato mais comprido do que o limite real do talhao."
+    });
+  }
+
+  return warnings.slice(0, 5);
+}
+
+function buildSuggestionSummary(draft, geometry) {
+  const expectedHa = Number(draft.hectares || 0);
+  const measuredHa = geometry ? measureGeometryAreaHectares(geometry) : 0;
+  const lat = Number(draft.lat);
+  const lon = Number(draft.lon);
+  const hasCenter = Number.isFinite(lat) && Number.isFinite(lon) && (lat !== 0 || lon !== 0);
+  const diffPercent = expectedHa > 0 && measuredHa > 0 ? (Math.abs(measuredHa - expectedHa) / expectedHa) * 100 : 100;
+  let score = 76;
+  if (!hasCenter) score -= 22;
+  if (!expectedHa) score -= 28;
+  else if (diffPercent > 18) score -= 18;
+  else if (diffPercent > 10) score -= 9;
+  if (state.form.geometryOrigin === "auto") score -= 8;
+  if (state.form.geometryOrigin === "assistida") score += 4;
+  if (state.form.geometryOrigin === "imported") score += 12;
+  if (state.form.geometryOrigin === "manual") score += 8;
+  score = Math.max(22, Math.min(92, score));
+
+  let label = "Boa base para revisar";
+  let tone = "medium";
+  if (score >= 82) {
+    label = "Base mais confiavel";
+    tone = "high";
+  } else if (score <= 58) {
+    label = "Precisa de revisao cuidadosa";
+    tone = "low";
+  }
+
+  const sourceLabel = state.form.geometryOrigin === "assistida"
+    ? "Sugestao assistida"
+    : state.form.geometryOrigin === "imported"
+      ? "Arquivo importado"
+      : state.form.geometryOrigin === "manual"
+        ? "Desenho manual"
+        : "Geracao automatica";
+
+  return {
+    score,
+    label,
+    tone,
+    sourceLabel,
+    expectedHa,
+    measuredHa,
+    diffPercent,
+    warnings: buildSuggestionWarnings(draft, geometry)
+  };
+}
+
+function renderSuggestionSummaryCard(draft, geometry) {
+  const summary = buildSuggestionSummary(draft, geometry);
+  const diffCopy = summary.expectedHa > 0 && summary.measuredHa > 0
+    ? `${summary.measuredHa.toFixed(1)} ha no desenho atual`
+    : "Sem area suficiente para comparar ainda";
+  const deltaCopy = summary.expectedHa > 0 && summary.measuredHa > 0
+    ? `${Math.abs(summary.measuredHa - summary.expectedHa).toFixed(1)} ha de diferenca`
+    : "Informe os hectares para travar melhor a sugestao";
+  return `
+    <div class="geometry-advice-shell">
+      <div class="geometry-advice-card">
+        <div class="geometry-advice-head">
+          <div>
+            <span class="eyebrow">Leitura do recorte</span>
+            <h3>${summary.label}</h3>
+          </div>
+          <span class="geometry-confidence-pill tone-${summary.tone}">${summary.sourceLabel}</span>
+        </div>
+        <p class="geometry-advice-copy">Hoje essa sugestao ainda nao enxerga pixel por pixel como um operador humano. Ela usa localizacao central, hectares e um formato provavel para entregar uma primeira borda que voce pode revisar no mapa.</p>
+        <div class="geometry-advice-metrics">
+          <div class="metric-box">
+            <span class="metric-label">Area esperada</span>
+            <span class="metric-value">${summary.expectedHa ? `${summary.expectedHa.toFixed(1)} ha` : "--"}</span>
+            <p class="metric-help">Esse numero serve como trava para a sugestao nao crescer ou encolher demais.</p>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Area do desenho</span>
+            <span class="metric-value">${summary.measuredHa ? `${summary.measuredHa.toFixed(1)} ha` : "--"}</span>
+            <p class="metric-help">${diffCopy}</p>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Diferenca</span>
+            <span class="metric-value">${summary.expectedHa && summary.measuredHa ? `${Math.abs(summary.diffPercent).toFixed(0)}%` : "--"}</span>
+            <p class="metric-help">${deltaCopy}</p>
+          </div>
+        </div>
+      </div>
+      <div class="geometry-warning-list">
+        ${summary.warnings.map((warning) => `
+          <article class="geometry-warning-card tone-${warning.tone}">
+            <strong>${warning.title}</strong>
+            <p>${warning.text}</p>
+          </article>
+        `).join("")}
+      </div>
+    </div>
+  `;
 }
 
 function getDraftGeometry() {
@@ -2843,12 +3046,14 @@ function getDraftGeometrySummary(geometry) {
     if (state.form.points.length < 3) {
       return "Marque pelo menos 3 pontos para fechar o contorno da area.";
     }
-    return "Contorno pronto. Se quiser, arraste os pontos no mapa para ajustar melhor a borda.";
+    return state.form.geometryOrigin === "assistida"
+      ? "Sugestao pronta. Agora vale comparar com a imagem e ajustar a borda onde a lavoura muda."
+      : "Contorno pronto. Se quiser, arraste os pontos no mapa para ajustar melhor a borda.";
   }
   if (state.form.geometryMode === "import") {
     return geometry ? "Arquivo valido carregado para este talhao." : "Cole um GeoJSON ou KML valido para usar o formato real da area.";
   }
-  return "Sem contorno manual. O sistema vai gerar um formato inicial automaticamente.";
+  return "Sem contorno manual. O sistema vai gerar uma primeira sugestao usando o centro e os hectares informados.";
 }
 
 function syncDraftCenterFromGeometry(geometry) {
@@ -2988,6 +3193,8 @@ async function handleClick(event) {
   const geometryModeButton = event.target.closest("[data-action='set-geometry-mode']");
   if (geometryModeButton) {
     state.form.geometryMode = geometryModeButton.dataset.mode || "auto";
+    state.form.geometryOrigin = state.form.geometryMode === "import" ? "imported" : state.form.geometryMode === "draw" ? "manual" : "auto";
+    state.form.suggestionMeta = null;
     state.form.error = null;
     if (state.form.geometryMode !== "draw") {
       state.form.points = state.form.geometryMode === "import" ? state.form.points : [];
@@ -3013,14 +3220,21 @@ async function handleClick(event) {
   const suggestGeometryPointsButton = event.target.closest("[data-action='suggest-geometry-points']");
   if (suggestGeometryPointsButton) {
     const suggestedPoints = buildSuggestedGeometryPoints();
+    state.form.geometryOrigin = "assistida";
+    state.form.suggestionMeta = {
+      createdAt: nowLabel(),
+      points: suggestedPoints.length
+    };
     applyFormPoints(suggestedPoints, { trackHistory: true });
-    pushToast("Recorte assistido pronto", "Montamos um desenho inicial para voce ajustar em cima da imagem.");
+    pushToast("Recorte assistido pronto", "Montamos uma primeira borda usando o centro e os hectares. Agora vale revisar os avisos e ajustar onde precisar.");
     render();
     return;
   }
 
   const clearGeometryPointsButton = event.target.closest("[data-action='clear-geometry-points']");
   if (clearGeometryPointsButton) {
+    state.form.geometryOrigin = "manual";
+    state.form.suggestionMeta = null;
     applyFormPoints([], { trackHistory: true, syncCenter: false });
     render();
     return;
@@ -3030,6 +3244,7 @@ async function handleClick(event) {
   if (removeGeometryPointButton) {
     const index = Number(removeGeometryPointButton.dataset.pointIndex);
     if (Number.isInteger(index) && index >= 0) {
+      if (state.form.geometryOrigin === "auto") state.form.geometryOrigin = "manual";
       applyFormPoints(
         state.form.points.filter((_, currentIndex) => currentIndex !== index),
         { trackHistory: true }
@@ -3145,6 +3360,8 @@ async function handleChange(event) {
         state.form.importText = await readGeometryFile(file);
         state.form.draft.geometryText = state.form.importText;
         state.form.geometryMode = "import";
+        state.form.geometryOrigin = "imported";
+        state.form.suggestionMeta = null;
         state.form.error = null;
         state.form.pointHistoryPast = [];
         state.form.pointHistoryFuture = [];
@@ -3164,6 +3381,7 @@ async function handleChange(event) {
       const axis = event.target.dataset.axis;
       const numericValue = Number(value);
       if (Number.isInteger(index) && Number.isFinite(numericValue) && state.form.points[index]) {
+        if (state.form.geometryOrigin === "auto") state.form.geometryOrigin = "manual";
         pushGeometryHistorySnapshot();
         const nextPoint = [...state.form.points[index]];
         nextPoint[axis === "lat" ? 1 : 0] = Number(numericValue.toFixed(6));
@@ -3179,6 +3397,8 @@ async function handleChange(event) {
     state.form.draft[name] = value;
     if (name === "geometryText") {
       state.form.importText = value;
+      state.form.geometryOrigin = "imported";
+      state.form.suggestionMeta = null;
       state.form.error = null;
       const geometry = getDraftGeometry();
       if (geometry) {
@@ -3207,6 +3427,11 @@ function handleInput(event) {
   if (name === "geometryText") {
     state.form.importText = value;
     state.form.error = null;
+    state.form.geometryOrigin = "imported";
+    state.form.suggestionMeta = null;
+  }
+  if (["hectares", "lat", "lon", "plotName", "farmName", "municipality", "crop"].includes(name) && state.form.geometryOrigin === "assistida") {
+    state.form.suggestionMeta = null;
   }
 }
 
