@@ -836,6 +836,27 @@ function evaluatePixel(sample) {
   normalized = Math.max(0, Math.min(1, normalized));
   return [normalized];
 }
+        """
+        return self._run_process(token, bbox, time_from, time_to, evalscript, width=width, height=height)
+
+    def _fetch_rgb_bytes(self, token, bbox, time_from, time_to, width=320, height=320):
+        evalscript = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{
+      bands: ["B02", "B03", "B04", "dataMask"]
+    }],
+    output: {
+      bands: 4,
+      sampleType: "AUTO"
+    }
+  };
+}
+
+function evaluatePixel(sample) {
+  return [2.3 * sample.B04, 2.3 * sample.B03, 2.3 * sample.B02, sample.dataMask];
+}
 """
         return self._run_process(token, bbox, time_from, time_to, evalscript, width=width, height=height)
 
@@ -851,12 +872,13 @@ function evaluatePixel(sample) {
         time_from, time_to = self._suggestion_timerange()
         try:
             image_bytes = self._fetch_ndvi_mask_bytes(token, bbox, time_from, time_to)
+            rgb_bytes = self._fetch_rgb_bytes(token, bbox, time_from, time_to)
         except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
             return {"ok": False, "reason": "imagery-unreachable"}
         if not image_bytes:
             return {"ok": False, "reason": "empty-image"}
         try:
-            geometry, diagnostics = infer_geometry_from_ndvi_mask(image_bytes, bbox, plot.get("hectares", 1))
+            geometry, diagnostics = infer_geometry_from_ndvi_mask(image_bytes, bbox, plot.get("hectares", 1), rgb_bytes=rgb_bytes)
         except Exception:
             return {"ok": False, "reason": "image-parse-failed"}
         if not geometry:
@@ -1535,10 +1557,12 @@ def enrich_snapshot_visual(plot, snapshot):
     snapshot.setdefault("ndviStats", None)
 
 
-def infer_geometry_from_ndvi_mask(image_bytes, bbox, target_hectares):
+def infer_geometry_from_ndvi_mask(image_bytes, bbox, target_hectares, rgb_bytes=None):
     image = Image.open(io.BytesIO(image_bytes)).convert("L")
     width, height = image.size
     pixels = image.load()
+    rgb_image = Image.open(io.BytesIO(rgb_bytes)).convert("RGBA") if rgb_bytes else None
+    rgb_pixels = rgb_image.load() if rgb_image else None
     center_x = width // 2
     center_y = height // 2
 
@@ -1584,7 +1608,7 @@ def infer_geometry_from_ndvi_mask(image_bytes, bbox, target_hectares):
     if not best_mask:
         return None, {"reason": "no-crop-region"}
 
-    polygon = radial_polygon_from_mask(best_mask, width, height, bbox)
+    polygon = radial_polygon_from_mask(best_mask, width, height, bbox, seed_x, seed_y, pixels, rgb_pixels)
     if not polygon:
         return None, {"reason": "no-polygon"}
 
@@ -1595,6 +1619,7 @@ def infer_geometry_from_ndvi_mask(image_bytes, bbox, target_hectares):
         "targetPixels": int(target_pixels),
         "regionPixels": int(best_region_size),
         "bboxAreaHa": round(bbox_area_ha, 1),
+        "edgeMode": "vegetation-and-texture" if rgb_pixels else "vegetation-only",
     }
     return polygon, diagnostics
 
@@ -1628,24 +1653,63 @@ def region_edge_penalty(mask, width, height):
     return min(0.6, touches_edge / max(1, len(mask)))
 
 
-def radial_polygon_from_mask(mask, width, height, bbox):
+def rgba_luma(pixel):
+    red, green, blue = float(pixel[0]), float(pixel[1]), float(pixel[2])
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def radial_polygon_from_mask(mask, width, height, bbox, seed_x, seed_y, ndvi_pixels, rgb_pixels):
     if not mask:
         return None
     average_x = sum(x for x, _ in mask) / len(mask)
     average_y = sum(y for _, y in mask) / len(mask)
     max_radius = int(math.hypot(width, height))
     points = []
-    for angle_index in range(16):
-        angle = (2 * math.pi * angle_index) / 16.0
+    for angle_index in range(24):
+        angle = (2 * math.pi * angle_index) / 24.0
         last_inside = None
-        for radius in range(1, max_radius):
+        best_point = None
+        best_score = -1.0
+        inside_run = 0
+        for radius in range(2, max_radius):
+            prev_x = int(round(seed_x + math.cos(angle) * (radius - 1)))
+            prev_y = int(round(seed_y + math.sin(angle) * (radius - 1)))
             x = int(round(average_x + math.cos(angle) * radius))
             y = int(round(average_y + math.sin(angle) * radius))
             if x < 0 or y < 0 or x >= width or y >= height or (x, y) not in mask:
+                if inside_run > 5:
+                    break
+                continue
+            if prev_x < 0 or prev_y < 0 or prev_x >= width or prev_y >= height:
                 break
             last_inside = (x, y)
-        if last_inside:
-            points.append(pixel_to_lnglat(last_inside[0], last_inside[1], width, height, bbox))
+            inside_run += 1
+
+            ndvi_now = int(ndvi_pixels[x, y])
+            ndvi_prev = int(ndvi_pixels[prev_x, prev_y])
+            ndvi_drop = max(0.0, (ndvi_prev - ndvi_now) / 255.0)
+
+            rgb_contrast = 0.0
+            if rgb_pixels:
+                rgb_now = rgba_luma(rgb_pixels[x, y])
+                rgb_prev = rgba_luma(rgb_pixels[prev_x, prev_y])
+                rgb_contrast = abs(rgb_now - rgb_prev) / 255.0
+
+            ahead_x = int(round(seed_x + math.cos(angle) * (radius + 2)))
+            ahead_y = int(round(seed_y + math.sin(angle) * (radius + 2)))
+            boundary_bonus = 0.0
+            if ahead_x < 0 or ahead_y < 0 or ahead_x >= width or ahead_y >= height or (ahead_x, ahead_y) not in mask:
+                boundary_bonus = 0.42
+
+            distance_bias = (radius / max_radius) * 0.12
+            score = (rgb_contrast * 0.9) + (ndvi_drop * 1.25) + boundary_bonus + distance_bias
+            if score > best_score:
+                best_score = score
+                best_point = (x, y)
+
+        chosen = best_point or last_inside
+        if chosen:
+            points.append(pixel_to_lnglat(chosen[0], chosen[1], width, height, bbox))
     deduped = []
     for point in points:
         if not deduped or abs(point[0] - deduped[-1][0]) > 1e-6 or abs(point[1] - deduped[-1][1]) > 1e-6:
