@@ -2325,6 +2325,7 @@ function renderFormView() {
                     <button class="button-secondary" type="button" data-action="undo-geometry-point" ${state.form.pointHistoryPast.length ? "" : "disabled"}>Desfazer</button>
                     <button class="button-secondary" type="button" data-action="redo-geometry-point" ${state.form.pointHistoryFuture.length ? "" : "disabled"}>Refazer</button>
                     <button class="button-secondary" type="button" data-action="suggest-geometry-points">Recorte assistido</button>
+                    <button class="button-secondary" type="button" data-action="open-import-mode">Importar arquivo</button>
                     <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
                   </div>
                   <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido": primeiro tentamos a imagem do satelite e, se ela nao vier, voltamos para a sugestao por centro e hectares.</p>
@@ -2350,7 +2351,11 @@ function renderFormView() {
               <div class="geometry-import-shell">
                 <div class="field-group full">
                   <label for="plot-geometry-file">Arquivo do talhao</label>
-                  <input id="plot-geometry-file" name="geometryFile" type="file" accept=".geojson,.json,.kml,.zip,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/zip" />
+                  <input id="plot-geometry-file" class="geometry-file-input" name="geometryFile" type="file" accept=".geojson,.json,.kml,.zip,.txt,application/geo+json,application/json,application/vnd.google-earth.kml+xml,application/zip" />
+                  <div class="panel-actions geometry-file-actions">
+                    <button class="button-secondary" type="button" data-action="pick-geometry-file">Selecionar arquivo</button>
+                    <button class="button-secondary" type="button" data-action="set-geometry-mode" data-mode="draw">Voltar para desenho</button>
+                  </div>
                   <p class="tiny">Voce pode enviar um arquivo `.geojson`, `.json`, `.kml` ou um `.zip` com o Shapefile.</p>
                 </div>
                 <div class="field-group full">
@@ -2457,6 +2462,7 @@ function renderGeometryModeButton(value, title, description, current) {
     <button
       class="segment-button ${value === current ? "active" : ""}"
       type="button"
+      aria-pressed="${value === current ? "true" : "false"}"
       data-action="set-geometry-mode"
       data-mode="${value}"
     >
@@ -3128,6 +3134,18 @@ function pointsFromGeometry(geometry) {
   return ring.length > 1 ? ring.slice(0, -1).map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])]) : [];
 }
 
+function setGeometryMode(mode) {
+  state.form.geometryMode = mode || "auto";
+  state.form.geometryOrigin = state.form.geometryMode === "import" ? "imported" : state.form.geometryMode === "draw" ? "manual" : "auto";
+  state.form.suggestionMeta = null;
+  state.form.error = null;
+  if (state.form.geometryMode !== "draw") {
+    state.form.points = state.form.geometryMode === "import" ? state.form.points : [];
+  }
+  state.form.pointHistoryPast = [];
+  state.form.pointHistoryFuture = [];
+}
+
 function isShapeZipFile(file) {
   return /\.zip$/i.test(file?.name || "");
 }
@@ -3249,16 +3267,59 @@ function handleUnauthorized(error) {
 async function handleClick(event) {
   const geometryModeButton = event.target.closest("[data-action='set-geometry-mode']");
   if (geometryModeButton) {
-    state.form.geometryMode = geometryModeButton.dataset.mode || "auto";
-    state.form.geometryOrigin = state.form.geometryMode === "import" ? "imported" : state.form.geometryMode === "draw" ? "manual" : "auto";
-    state.form.suggestionMeta = null;
-    state.form.error = null;
-    if (state.form.geometryMode !== "draw") {
-      state.form.points = state.form.geometryMode === "import" ? state.form.points : [];
-    }
-    state.form.pointHistoryPast = [];
-    state.form.pointHistoryFuture = [];
+    setGeometryMode(geometryModeButton.dataset.mode || "auto");
     render();
+    return;
+  }
+
+  const openImportModeButton = event.target.closest("[data-action='open-import-mode']");
+  if (openImportModeButton) {
+    setGeometryMode("import");
+    render();
+    window.requestAnimationFrame(() => {
+      const input = document.getElementById("plot-geometry-file");
+      if (input?.showPicker) {
+        try {
+          input.showPicker();
+          return;
+        } catch (error) {
+          // Fall back to click below.
+        }
+      }
+      input?.click?.();
+    });
+    return;
+  }
+
+  const pickGeometryFileButton = event.target.closest("[data-action='pick-geometry-file']");
+  if (pickGeometryFileButton) {
+    const input = document.getElementById("plot-geometry-file");
+    if (!input) {
+      setGeometryMode("import");
+      render();
+      window.requestAnimationFrame(() => {
+        const nextInput = document.getElementById("plot-geometry-file");
+        if (nextInput?.showPicker) {
+          try {
+            nextInput.showPicker();
+            return;
+          } catch (error) {
+            // Fall back to click below.
+          }
+        }
+        nextInput?.click?.();
+      });
+      return;
+    }
+    if (input.showPicker) {
+      try {
+        input.showPicker();
+        return;
+      } catch (error) {
+        // Fall back to click below.
+      }
+    }
+    input.click();
     return;
   }
 

@@ -1046,6 +1046,15 @@ optgroup {
   margin-top: 18px;
 }
 
+.geometry-file-input {
+  margin-top: 10px;
+}
+
+.geometry-file-actions {
+  margin-top: 12px;
+  gap: 10px;
+}
+
 .geometry-preview-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
