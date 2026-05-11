@@ -47,6 +47,8 @@ const state = {
   },
   form: {
     draft: null,
+    editPlotId: null,
+    loadedPlotId: null,
     geometryMode: "auto",
     points: [],
     pointHistoryPast: [],
@@ -261,6 +263,10 @@ function buildOfflineSnapshot(plotId, crop, options) {
     source: "Sentinel-2 L2A",
     resolutionM: 10,
     sceneId: `S2-DEMO-${plotId}-${String(index).padStart(2, "0")}`,
+    imageDataUrl: null,
+    imageMode: "demo",
+    analysisSource: "Simulacao local do CampoSat",
+    imageNote: "Sem credencial externa configurada, o CampoSat usa a imagem base do mapa como apoio visual.",
     weather: buildOfflineWeather(crop, status, ndvi),
     zones: buildOfflineZones(status),
     hotspot
@@ -710,6 +716,7 @@ function normalizeEmail(value) {
 function render() {
   teardownMaps();
   const route = getRoute();
+  prepareFormStateForRoute(route);
   const portfolioPlots = getPortfolioPlots();
   const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
 
@@ -967,6 +974,21 @@ function mountFormMap(route) {
   });
 
   formMap.on("click", (event) => {
+    const lineHits = formMap.queryRenderedFeatures(event.point, {
+      layers: ["form-geometry-line-layer", "form-geometry-focus-line-layer"]
+    });
+    if (lineHits.length && state.form.points.length >= 2) {
+      const insertionIndex = findLineInsertionIndex(event.point);
+      if (insertionIndex >= 0) {
+        const insertedPoint = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
+        const nextPoints = cloneGeometryPoints(state.form.points);
+        nextPoints.splice(insertionIndex + 1, 0, insertedPoint);
+        applyFormPoints(nextPoints, { trackHistory: true });
+        pushToast("Ponto inserido", "Voce clicou na borda e nos colocamos um novo ponto nesse trecho.");
+        render();
+        return;
+      }
+    }
     const candidate = [Number(event.lngLat.lng.toFixed(6)), Number(event.lngLat.lat.toFixed(6))];
     const snappedPoint = getSnappedGeometryPoint(candidate);
     const nextPoint = snappedPoint || candidate;
@@ -1001,6 +1023,45 @@ function getSnappedGeometryPoint(candidate) {
   const dy = projectedCandidate.y - projectedFirst.y;
   const distance = Math.sqrt(dx * dx + dy * dy);
   return distance <= 18 ? [...firstPoint] : null;
+}
+
+function findLineInsertionIndex(screenPoint) {
+  if (!formMap || state.form.points.length < 2) return -1;
+  const clickableSegments = [];
+  for (let index = 0; index < state.form.points.length - 1; index += 1) {
+    clickableSegments.push([state.form.points[index], state.form.points[index + 1], index]);
+  }
+  if (state.form.points.length >= 3) {
+    clickableSegments.push([state.form.points[state.form.points.length - 1], state.form.points[0], state.form.points.length - 1]);
+  }
+
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  clickableSegments.forEach(([start, end, index]) => {
+    const startPoint = formMap.project(start);
+    const endPoint = formMap.project(end);
+    const distance = distanceToSegment(screenPoint, startPoint, endPoint);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestDistance <= 16 ? bestIndex : -1;
+}
+
+function distanceToSegment(point, segmentStart, segmentEnd) {
+  const dx = segmentEnd.x - segmentStart.x;
+  const dy = segmentEnd.y - segmentStart.y;
+  if (!dx && !dy) {
+    return Math.hypot(point.x - segmentStart.x, point.y - segmentStart.y);
+  }
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - segmentStart.x) * dx + (point.y - segmentStart.y) * dy) / (dx * dx + dy * dy))
+  );
+  const projectedX = segmentStart.x + t * dx;
+  const projectedY = segmentStart.y + t * dy;
+  return Math.hypot(point.x - projectedX, point.y - projectedY);
 }
 
 function updateFormMapLayers() {
@@ -1186,7 +1247,7 @@ function getRoute() {
     return { view: "plots" };
   }
   if (parts[0] === "cadastro") {
-    return { view: "form" };
+    return { view: "form", plotId: parts[1] || null };
   }
   if (parts[0] === "alertas") {
     return { view: "alerts" };
@@ -1195,6 +1256,19 @@ function getRoute() {
     return { view: "detail", plotId: parts[1] };
   }
   return { view: "plots" };
+}
+
+function prepareFormStateForRoute(route) {
+  if (route.view !== "form") return;
+  if (route.plotId) {
+    if (state.form.loadedPlotId === route.plotId) return;
+    const plot = getPlot(route.plotId);
+    if (!plot) return;
+    loadPlotIntoForm(plot);
+    return;
+  }
+  if (!state.form.loadedPlotId && !state.form.editPlotId) return;
+  resetFormDraft(getCurrentUser(), getActiveAgronomist());
 }
 
 function renderLoadingShell() {
@@ -1472,11 +1546,14 @@ function renderTopbar(route, activePlot) {
   let secondaryKpiValue;
 
   if (route.view === "form") {
+    const editing = Boolean(state.form.editPlotId);
     current = {
-      title: "Cadastrar nova area",
-      text: "Preencha os dados da fazenda e do talhao para essa area entrar no acompanhamento."
+      title: editing ? "Editar area cadastrada" : "Cadastrar nova area",
+      text: editing
+        ? "Ajuste os dados da fazenda, do talhao e do contorno sem perder o historico dessa area."
+        : "Preencha os dados da fazenda e do talhao para essa area entrar no acompanhamento."
     };
-    modeLabel = "Cadastro";
+    modeLabel = editing ? "Edicao" : "Cadastro";
     primaryKpiLabel = "Areas cadastradas";
     primaryKpiValue = String(getPortfolioPlots().length);
     secondaryKpiLabel = "Ultima atualizacao";
@@ -1775,6 +1852,7 @@ function renderPlotCard(plot) {
 
       <div class="card-actions">
         <a class="button-secondary" href="#/talhao/${plot.id}">Abrir mapa</a>
+        <a class="button-secondary" href="#/cadastro/${plot.id}">Editar area</a>
         <button class="analyze-button" type="button" data-action="analyze" data-id="${plot.id}">Buscar imagem mais nova</button>
       </div>
     </article>
@@ -1906,6 +1984,12 @@ function renderDetailView(plot) {
 
       <div class="detail-column">
         <section class="panel">
+          <span class="eyebrow">Imagem da analise</span>
+          <h3>O que entrou como apoio visual</h3>
+          ${renderSceneImagePanel(scene)}
+        </section>
+
+        <section class="panel">
           <span class="eyebrow">Clima da ultima leitura</span>
           <h3>Como estava o tempo na area</h3>
           <div class="weather-grid" style="margin-top: 18px;">
@@ -1930,6 +2014,7 @@ function renderDetailView(plot) {
           <div class="big-number">${scene.affectedAreaHa} ha</div>
           <p class="metric-copy">${buildActionSummary(plot, scene)}</p>
           <div class="panel-actions" style="margin-top: 18px;">
+            <a class="button-secondary" href="#/cadastro/${plot.id}">Editar area</a>
             <button class="button" type="button" data-action="analyze" data-id="${plot.id}">Buscar imagem mais nova</button>
           </div>
         </section>
@@ -2027,14 +2112,15 @@ function renderFormView() {
   const draft = ensureFormDraft(currentUser, activeAgronomist);
   const geometry = getDraftGeometry();
   const geometrySummary = getDraftGeometrySummary(geometry);
+  const editing = Boolean(state.form.editPlotId);
   return `
     <section class="form-shell">
       <div class="panel">
         <div class="form-header">
           <div>
             <span class="eyebrow">Cadastro de talhao</span>
-            <h3>Novo talhao monitorado</h3>
-            <p>Preencha os dados basicos e escolha como o contorno da area sera definido: desenho no mapa, importacao de arquivo ou geracao automatica.</p>
+            <h3>${editing ? "Editar talhao monitorado" : "Novo talhao monitorado"}</h3>
+            <p>${editing ? "Ajuste os dados basicos e o contorno da area sem perder o historico ja salvo para esse talhao." : "Preencha os dados basicos e escolha como o contorno da area sera definido: desenho no mapa, importacao de arquivo ou geracao automatica."}</p>
           </div>
         </div>
 
@@ -2192,8 +2278,8 @@ function renderFormView() {
           </div>
 
           <div class="panel-actions" style="margin-top: 18px;">
-            <button class="button" type="submit">Salvar talhao</button>
-            <a class="button-secondary" href="#/talhoes">Cancelar</a>
+            <button class="button" type="submit">${editing ? "Atualizar talhao" : "Salvar talhao"}</button>
+            <a class="button-secondary" href="${editing ? `#/talhao/${state.form.editPlotId}` : "#/talhoes"}">Cancelar</a>
           </div>
         </form>
       </div>
@@ -2279,6 +2365,28 @@ function renderPointEditorRow(point, index) {
   `;
 }
 
+function renderSceneImagePanel(scene) {
+  if (scene.imageDataUrl) {
+    return `
+      <div class="scene-image-shell" style="margin-top: 18px;">
+        <img class="scene-image-preview" src="${scene.imageDataUrl}" alt="Imagem real da analise do talhao" />
+        <div class="scene-image-copy">
+          <strong>${escapeHtml(scene.analysisSource || "Imagem real carregada")}</strong>
+          <p>${escapeHtml(scene.imageNote || "Imagem real usada como apoio visual para esta analise.")}</p>
+        </div>
+      </div>
+    `;
+  }
+  return `
+    <div class="scene-image-shell scene-image-empty" style="margin-top: 18px;">
+      <div class="scene-image-copy">
+        <strong>${escapeHtml(scene.analysisSource || "Fluxo local do CampoSat")}</strong>
+        <p>${escapeHtml(scene.imageNote || "Ainda nao ha imagem real vinculada a esta analise.")}</p>
+      </div>
+    </div>
+  `;
+}
+
 function renderGeometryPreviewLabel(draft) {
   const farmName = String(draft.farmName || "Fazenda sem nome").trim();
   const plotName = String(draft.plotName || "Talhao em edicao").trim();
@@ -2310,6 +2418,37 @@ function ensureFormDraft(currentUser, activeAgronomist) {
   return state.form.draft;
 }
 
+function loadPlotIntoForm(plot) {
+  state.form.draft = {
+    plotName: plot.name || "",
+    farmName: plot.farmName || "",
+    crop: plot.crop || "Soja",
+    hectares: plot.hectares || "",
+    municipality: plot.municipality || "",
+    agronomist: plot.agronomist || getActiveAgronomist() || getCurrentUser()?.name || "",
+    lat: Number(plot.center?.lat || 0).toFixed(6),
+    lon: Number(plot.center?.lon || 0).toFixed(6),
+    whatsapp: plot.whatsapp || "",
+    notes: plot.notes || "",
+  };
+  state.form.editPlotId = plot.id;
+  state.form.loadedPlotId = plot.id;
+  state.form.geometryMode = plot.geometry ? "draw" : "auto";
+  state.form.points = [];
+  state.form.pointHistoryPast = [];
+  state.form.pointHistoryFuture = [];
+  state.form.importText = plot.geometry ? JSON.stringify(plot.geometry, null, 2) : "";
+  state.form.error = null;
+  state.form.mapCenter = {
+    lat: Number(plot.center?.lat || -15.8),
+    lon: Number(plot.center?.lon || -47.9),
+  };
+  state.form.mapZoom = plot.geometry ? 15.8 : 13.8;
+  if (plot.geometry) {
+    syncPointsFromGeometry(plot.geometry);
+  }
+}
+
 function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getActiveAgronomist()) {
   state.form.draft = {
     plotName: "",
@@ -2323,6 +2462,8 @@ function resetFormDraft(currentUser = getCurrentUser(), activeAgronomist = getAc
     whatsapp: currentUser?.whatsapp || "",
     notes: ""
   };
+  state.form.editPlotId = null;
+  state.form.loadedPlotId = null;
   state.form.geometryMode = "auto";
   state.form.points = [];
   state.form.pointHistoryPast = [];
@@ -3104,20 +3245,28 @@ async function handleSubmit(event) {
   try {
     state.busy = true;
     state.form.error = null;
+    const editingPlotId = state.form.editPlotId;
     if (state.offlineMode) {
-      createOfflinePlot(payload);
+      editingPlotId ? updateOfflinePlot(editingPlotId, payload) : createOfflinePlot(payload);
       applyBootstrapPayload(getOfflineBootstrap(), { offlineMode: true });
     } else {
-      await api("/api/plots", { method: "POST", body: payload });
+      if (editingPlotId) {
+        await api("/api/plots", { method: "POST", body: { ...payload, plotId: editingPlotId } });
+      } else {
+        await api("/api/plots", { method: "POST", body: payload });
+      }
       await loadBootstrap();
     }
     resetFormDraft(currentUser, getActiveAgronomist());
-    pushToast("Talhao cadastrado", `${payload.plotName} entrou no painel de monitoramento.`);
-    window.location.hash = "#/talhoes";
+    pushToast(
+      editingPlotId ? "Talhao atualizado" : "Talhao cadastrado",
+      editingPlotId ? `${payload.plotName} foi atualizado sem perder o historico salvo.` : `${payload.plotName} entrou no painel de monitoramento.`
+    );
+    window.location.hash = editingPlotId ? `#/talhao/${editingPlotId}` : "#/talhoes";
   } catch (error) {
     if (handleUnauthorized(error)) return;
-    state.form.error = error.message || "Nao foi possivel cadastrar o talhao.";
-    pushToast("Falha no cadastro", error.message || "Nao foi possivel cadastrar o talhao.");
+    state.form.error = error.message || "Nao foi possivel salvar o talhao.";
+    pushToast("Falha no cadastro", error.message || "Nao foi possivel salvar o talhao.");
     render();
   } finally {
     state.busy = false;
@@ -3281,6 +3430,33 @@ function createOfflinePlot(payload) {
     alerts: []
   };
   offlineState.plots.unshift(plot);
+  saveOfflineState(offlineState);
+  return { plot: cloneData(plot) };
+}
+
+function updateOfflinePlot(plotId, payload) {
+  const offlineState = loadOfflineState();
+  const plot = offlineState.plots.find((item) => item.id === plotId);
+  if (!plot) {
+    throw new Error("Talhao nao encontrado.");
+  }
+  const geometry = payload.geometry ? cloneData(payload.geometry) : null;
+  const geometryCenter = geometry ? centroidFromGeometry(geometry) : null;
+  const lat = Number.isFinite(Number(payload.lat)) ? Number(payload.lat) : geometryCenter?.lat || plot.center.lat || 0;
+  const lon = Number.isFinite(Number(payload.lon)) ? Number(payload.lon) : geometryCenter?.lon || plot.center.lon || 0;
+
+  plot.name = String(payload.plotName || plot.name).trim() || plot.name;
+  plot.farmName = String(payload.farmName || plot.farmName).trim() || plot.farmName;
+  plot.crop = payload.crop || plot.crop;
+  plot.hectares = Number(payload.hectares || plot.hectares || 0);
+  plot.municipality = String(payload.municipality || plot.municipality).trim() || plot.municipality;
+  plot.center = { lat, lon };
+  plot.coordinatesText = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+  plot.geometry = geometry;
+  plot.agronomist = String(payload.agronomist || plot.agronomist).trim() || plot.agronomist;
+  plot.whatsapp = String(payload.whatsapp || plot.whatsapp).trim() || plot.whatsapp;
+  plot.notes = String(payload.notes || plot.notes).trim();
+
   saveOfflineState(offlineState);
   return { plot: cloneData(plot) };
 }

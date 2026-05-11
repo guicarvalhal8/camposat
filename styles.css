@@ -1448,6 +1448,39 @@ optgroup {
   gap: 12px;
 }
 
+.scene-image-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scene-image-preview {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: #08131a;
+}
+
+.scene-image-copy strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.scene-image-copy p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.scene-image-empty {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .big-number {
   font-size: clamp(2.8rem, 5vw, 3.8rem);
   line-height: 1;

@@ -1,8 +1,11 @@
 import argparse
+import base64
 import copy
 import hashlib
 import hmac
 import json
+import math
+import os
 import secrets
 import sqlite3
 from datetime import datetime, timedelta
@@ -11,6 +14,7 @@ from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from urllib import error as urllib_error, parse as urllib_parse, request as urllib_request
 
 
 ROOT = Path(__file__).resolve().parent
@@ -683,12 +687,137 @@ class MockSatelliteProvider:
         return next_snapshot
 
 
+class SentinelHubImageProvider:
+    def __init__(self):
+        self.client_id = os.getenv("SENTINELHUB_CLIENT_ID", "").strip()
+        self.client_secret = os.getenv("SENTINELHUB_CLIENT_SECRET", "").strip()
+        self.process_url = os.getenv("SENTINELHUB_PROCESS_URL", "https://services.sentinel-hub.com/api/v1/process").strip()
+        self.token_url = os.getenv("SENTINELHUB_TOKEN_URL", "https://services.sentinel-hub.com/oauth/token").strip()
+        self._token = None
+        self._token_expires_at = None
+
+    @property
+    def enabled(self):
+        return bool(self.client_id and self.client_secret)
+
+    def _get_token(self):
+        if not self.enabled:
+            return None
+        if self._token and self._token_expires_at and datetime.utcnow() < self._token_expires_at:
+            return self._token
+
+        body = urllib_parse.urlencode(
+            {
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }
+        ).encode("utf-8")
+        request = urllib_request.Request(
+            self.token_url,
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        with urllib_request.urlopen(request, timeout=25) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        token = payload.get("access_token")
+        expires_in = int(payload.get("expires_in", 0) or 0)
+        if not token:
+            return None
+        self._token = token
+        self._token_expires_at = datetime.utcnow() + timedelta(seconds=max(0, expires_in - 60))
+        return token
+
+    def fetch_preview(self, plot, snapshot):
+        if not self.enabled:
+            return None
+        token = self._get_token()
+        if not token:
+            return None
+
+        bbox = build_plot_bbox(plot)
+        if not bbox:
+            return None
+
+        captured = datetime.strptime(snapshot["capturedAt"], "%Y-%m-%d %H:%M")
+        time_from = (captured - timedelta(days=20)).strftime("%Y-%m-%dT00:00:00Z")
+        time_to = captured.strftime("%Y-%m-%dT23:59:59Z")
+        payload = {
+            "input": {
+                "bounds": {
+                    "bbox": bbox,
+                    "properties": {"crs": "http://www.opengis.net/def/crs/OGC/1.3/CRS84"},
+                },
+                "data": [
+                    {
+                        "type": "sentinel-2-l2a",
+                        "dataFilter": {
+                            "timeRange": {"from": time_from, "to": time_to},
+                            "mosaickingOrder": "leastCC",
+                        },
+                    }
+                ],
+            },
+            "output": {
+                "width": 640,
+                "height": 640,
+                "responses": [{"identifier": "default", "format": {"type": "image/png"}}],
+            },
+            "evalscript": """
+//VERSION=3
+function setup() {
+  return {
+    input: [{
+      bands: ["B02", "B03", "B04"]
+    }],
+    output: {
+      bands: 3,
+      sampleType: "AUTO"
+    }
+  };
+}
+
+function evaluatePixel(sample) {
+  return [2.5 * sample.B04, 2.5 * sample.B03, 2.5 * sample.B02];
+}
+""".strip(),
+        }
+        request = urllib_request.Request(
+            self.process_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "Accept": "image/png",
+            },
+            method="POST",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=40) as response:
+                image_bytes = response.read()
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
+            return None
+
+        if not image_bytes:
+            return None
+
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        return {
+            "imageDataUrl": f"data:image/png;base64,{encoded}",
+            "imageMode": "real-preview",
+            "analysisSource": "Sentinel-2 L2A via Sentinel Hub",
+            "imageNote": "Imagem real buscada para apoiar a vistoria visual. Os indicadores do CampoSat ainda seguem o fluxo atual de analise.",
+        }
+
+
 class ProviderRegistry:
     def __init__(self):
         self.weather = MockWeatherProvider()
         self.market = MockMarketProvider()
         self.whatsapp = MockWhatsAppProvider()
         self.satellite = MockSatelliteProvider(self.weather)
+        self.satellite_images = SentinelHubImageProvider()
 
 
 REGISTRY = ProviderRegistry()
@@ -832,10 +961,16 @@ def create_plot(connection, payload, user):
                     {"id": "A4", "fill": "#7fd786", "stroke": "#ceffd0"},
                 ],
                 "hotspot": {"x": 68, "y": 52, "radius": 8, "label": "Sem risco"},
+                "imageDataUrl": None,
+                "imageMode": "demo",
+                "analysisSource": "Simulacao local do CampoSat",
+                "imageNote": "Primeiro processamento criado localmente. A imagem real pode entrar quando a integracao externa estiver configurada.",
             }
         ],
         "alerts": [],
     }
+
+    enrich_snapshot_visual(plot, plot["snapshots"][0])
 
     connection.execute(
         """
@@ -871,6 +1006,58 @@ def create_plot(connection, payload, user):
     return plot
 
 
+def update_plot(connection, payload, user, plot_id):
+    plot = get_owned_plot(connection, user, plot_id)
+    if not plot:
+        return None
+
+    crop = payload.get("crop", plot.get("crop", "Soja"))
+    geometry = normalize_polygon_geometry(payload.get("geometry"))
+    lat_value = payload.get("lat")
+    lon_value = payload.get("lon")
+    center = {
+        "lat": float(lat_value) if lat_value not in (None, "") else float(plot["center"]["lat"]),
+        "lon": float(lon_value) if lon_value not in (None, "") else float(plot["center"]["lon"]),
+    }
+    if geometry:
+        centroid = centroid_from_geometry(geometry)
+        if centroid:
+            center = centroid
+
+    farm_name = payload.get("farmName", plot["farmName"]).strip() or plot["farmName"]
+    municipality = payload.get("municipality", plot["municipality"]).strip() or plot["municipality"]
+    whatsapp = payload.get("whatsapp", plot.get("whatsapp", "")).strip() or plot.get("whatsapp", "")
+    farm_id = ensure_farm(
+        connection,
+        user["id"],
+        farm_name,
+        municipality=municipality,
+        whatsapp=whatsapp,
+    )
+
+    plot.update(
+        {
+            "farmId": farm_id,
+            "name": payload.get("plotName", plot["name"]).strip() or plot["name"],
+            "farmName": farm_name,
+            "crop": crop,
+            "hectares": int(payload.get("hectares", plot["hectares"])),
+            "municipality": municipality,
+            "center": center,
+            "coordinatesText": f"{center['lat']:.4f}, {center['lon']:.4f}",
+            "geometry": geometry,
+            "agronomist": user["name"],
+            "whatsapp": whatsapp,
+            "notes": payload.get("notes", plot.get("notes", "")).strip(),
+        }
+    )
+
+    save_plot(connection, plot)
+    touch_last_updated(connection)
+    connection.commit()
+    return plot
+
+
 def get_owned_plot(connection, user, plot_id):
     plot = fetch_plot_by_id(connection, plot_id)
     if not plot or plot.get("ownerUserId") != user["id"]:
@@ -883,6 +1070,7 @@ def analyze_plot(connection, user, plot_id):
     if not plot:
         return None, None
     snapshot = REGISTRY.satellite.analyze_plot(plot)
+    enrich_snapshot_visual(plot, snapshot)
     plot["snapshots"].append(snapshot)
     alert = append_alert_if_needed(connection, plot, snapshot)
     save_plot(connection, plot)
@@ -942,6 +1130,51 @@ def centroid_from_geometry(geometry):
     lat = sum(float(pair[1]) for pair in unique) / len(unique)
     lon = sum(float(pair[0]) for pair in unique) / len(unique)
     return {"lat": lat, "lon": lon}
+
+
+def geometry_bounds(geometry):
+    ring = ((geometry or {}).get("coordinates") or [[]])[0]
+    if not ring:
+        return None
+    min_lon = min(float(pair[0]) for pair in ring)
+    max_lon = max(float(pair[0]) for pair in ring)
+    min_lat = min(float(pair[1]) for pair in ring)
+    max_lat = max(float(pair[1]) for pair in ring)
+    return (min_lon, min_lat, max_lon, max_lat)
+
+
+def build_plot_bbox(plot):
+    geometry = normalize_polygon_geometry(plot.get("geometry"))
+    if geometry:
+        bounds = geometry_bounds(geometry)
+        if bounds:
+            return list(bounds)
+
+    center = plot.get("center") or {}
+    lat = float(center.get("lat", 0) or 0)
+    lon = float(center.get("lon", 0) or 0)
+    if not lat and not lon:
+        return None
+
+    hectares = max(1.0, float(plot.get("hectares", 1) or 1))
+    half_side_meters = max(110, ((hectares * 10000) ** 0.5) / 2)
+    lat_delta = half_side_meters / 111320
+    lon_delta = half_side_meters / (111320 * max(0.2, abs(math.cos((lat * math.pi) / 180))))
+    return [lon - lon_delta, lat - lat_delta, lon + lon_delta, lat + lat_delta]
+
+
+def enrich_snapshot_visual(plot, snapshot):
+    live_preview = REGISTRY.satellite_images.fetch_preview(plot, snapshot)
+    if live_preview:
+        snapshot.update(live_preview)
+        return
+    snapshot.setdefault("imageDataUrl", None)
+    snapshot.setdefault("imageMode", "demo")
+    snapshot.setdefault("analysisSource", "Simulacao local do CampoSat")
+    snapshot.setdefault(
+        "imageNote",
+        "Sem credencial externa configurada, a analise segue usando o fluxo local e a imagem real aparece apenas no mapa base.",
+    )
 
 
 class CampoSatHandler(SimpleHTTPRequestHandler):
@@ -1125,6 +1358,15 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
 
         if parsed.path == "/api/plots":
             with open_db() as connection:
+                plot_id = str(payload.get("plotId") or "").strip()
+                if plot_id:
+                    plot = update_plot(connection, payload, user, plot_id)
+                    if not plot:
+                        self.send_json({"error": "Talhao nao encontrado."}, status=HTTPStatus.NOT_FOUND)
+                        return
+                    self.send_json({"plot": plot})
+                    return
+
                 plot = create_plot(connection, payload, user)
             self.send_json({"plot": plot}, status=HTTPStatus.CREATED)
             return
@@ -1156,6 +1398,25 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             with open_db() as connection:
                 seed_database(connection)
             self.send_json({"ok": True})
+            return
+
+        self.send_json({"error": "Rota nao encontrada."}, status=HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        payload = self.parse_body()
+        user = self.require_user()
+        if not user:
+            return
+
+        if parsed.path.startswith("/api/plots/"):
+            plot_id = parsed.path.rsplit("/", 1)[-1]
+            with open_db() as connection:
+                plot = update_plot(connection, payload, user, plot_id)
+            if not plot:
+                self.send_json({"error": "Talhao nao encontrado."}, status=HTTPStatus.NOT_FOUND)
+                return
+            self.send_json({"plot": plot})
             return
 
         self.send_json({"error": "Rota nao encontrada."}, status=HTTPStatus.NOT_FOUND)
