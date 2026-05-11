@@ -1948,6 +1948,25 @@ optgroup {
   color: var(--muted);
 }
 
+.market-context-note {
+  grid-column: 1 / -1;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.market-context-note strong {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.market-context-note p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .map-toolbar {
   display: flex;
   flex-direction: column;

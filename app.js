@@ -515,13 +515,13 @@ function buildOfflineSeed() {
         label: "Soja saca 60kg",
         price: 128.4,
         change: 1.8,
-        source: "Fonte demo local"
+        source: "Referencia atual em Goias"
       },
       corn: {
         label: "Milho saca 60kg",
         price: 69.7,
         change: -0.6,
-        source: "Fonte demo local"
+        source: "Referencia atual em Goias"
       }
     },
     farms,
@@ -1840,9 +1840,9 @@ function renderDashboardView() {
         <section class="panel">
           <div class="panel-header">
             <div>
-              <span class="eyebrow">Precos do dia</span>
-              <h3>Referencia para soja e milho</h3>
-              <p>Esses valores ajudam a dar contexto comercial, mas a saude da lavoura continua vindo da imagem e do clima.</p>
+              <span class="eyebrow">Mercado</span>
+              <h3>Precos acompanhados hoje</h3>
+              <p>Esses valores ajudam a dar contexto comercial. Por enquanto, o Mercado traz apenas referencias de Goias.</p>
             </div>
           </div>
           <div class="commodity-grid" style="margin-top: 18px;">
@@ -2119,8 +2119,8 @@ function renderDetailView(plot) {
         </section>
 
         <section class="panel">
-          <span class="eyebrow">Precos do dia</span>
-          <h3>Referencia de mercado</h3>
+          <span class="eyebrow">Mercado</span>
+          <h3>Precos acompanhados hoje</h3>
           <div class="commodity-grid" style="margin-top: 18px;">
             ${renderMarketCards()}
           </div>
@@ -3205,6 +3205,10 @@ function renderMarketCards() {
       <span class="metric-delta ${state.market.corn.change >= 0 ? "up" : "down"}">${formatSigned(state.market.corn.change)}</span>
       <p class="metric-help">${describeMarketMove(state.market.corn.change)}</p>
       <span class="tiny market-source">Fonte: ${state.market.corn.source}</span>
+    </div>
+    <div class="market-context-note">
+      <strong>Por enquanto, este bloco mostra apenas referencias de Goias.</strong>
+      <p>Mais para frente, podemos expandir o Mercado para outras regioes e outras culturas sem mexer no restante do app.</p>
     </div>
   `;
 }

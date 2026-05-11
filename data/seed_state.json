@@ -31,13 +31,13 @@
       "label": "Soja saca 60kg",
       "price": 128.4,
       "change": 1.8,
-      "source": "Fonte demo local"
+      "source": "Referencia atual em Goias"
     },
     "corn": {
       "label": "Milho saca 60kg",
       "price": 69.7,
       "change": -0.6,
-      "source": "Fonte demo local"
+      "source": "Referencia atual em Goias"
     }
   },
   "plots": [
