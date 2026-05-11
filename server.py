@@ -3,6 +3,7 @@ import base64
 import copy
 import hashlib
 import hmac
+import io
 import json
 import math
 import os
@@ -13,6 +14,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from PIL import Image
 from urllib.parse import parse_qs, urlparse
 from urllib import error as urllib_error, parse as urllib_parse, request as urllib_request
 
@@ -804,6 +806,68 @@ class SentinelHubImageProvider:
         with urllib_request.urlopen(request, timeout=40) as response:
             return response.read()
 
+    def _suggestion_timerange(self):
+        time_to = datetime.utcnow()
+        time_from = time_to - timedelta(days=35)
+        return (
+            time_from.strftime("%Y-%m-%dT00:00:00Z"),
+            time_to.strftime("%Y-%m-%dT23:59:59Z"),
+        )
+
+    def _fetch_ndvi_mask_bytes(self, token, bbox, time_from, time_to, width=320, height=320):
+        evalscript = """
+//VERSION=3
+function setup() {
+  return {
+    input: [{
+      bands: ["B04", "B08", "CLD", "dataMask"]
+    }],
+    output: {
+      bands: 1,
+      sampleType: "AUTO"
+    }
+  };
+}
+
+function evaluatePixel(sample) {
+  if (sample.dataMask === 0 || sample.CLD > 60) return [0];
+  let ndvi = index(sample.B08, sample.B04);
+  let normalized = (ndvi + 0.1) / 0.9;
+  normalized = Math.max(0, Math.min(1, normalized));
+  return [normalized];
+}
+"""
+        return self._run_process(token, bbox, time_from, time_to, evalscript, width=width, height=height)
+
+    def suggest_geometry(self, plot):
+        if not self.enabled:
+            return {"ok": False, "reason": "sentinel-unavailable"}
+        token = self._get_token()
+        if not token:
+            return {"ok": False, "reason": "token-unavailable"}
+        bbox = build_bbox_from_center(plot.get("center") or {}, plot.get("hectares", 1), expansion=2.2)
+        if not bbox:
+            return {"ok": False, "reason": "missing-center"}
+        time_from, time_to = self._suggestion_timerange()
+        try:
+            image_bytes = self._fetch_ndvi_mask_bytes(token, bbox, time_from, time_to)
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError):
+            return {"ok": False, "reason": "imagery-unreachable"}
+        if not image_bytes:
+            return {"ok": False, "reason": "empty-image"}
+        try:
+            geometry, diagnostics = infer_geometry_from_ndvi_mask(image_bytes, bbox, plot.get("hectares", 1))
+        except Exception:
+            return {"ok": False, "reason": "image-parse-failed"}
+        if not geometry:
+            return {"ok": False, "reason": "no-region-found"}
+        geometry = scale_geometry_to_target_area(geometry, plot.get("hectares", 1))
+        diagnostics["measuredHectares"] = round(geometry_area_hectares(geometry), 1)
+        diagnostics["targetHectares"] = float(plot.get("hectares", 0) or 0)
+        diagnostics["source"] = "Sentinel-2 L2A via Sentinel Hub"
+        diagnostics["mode"] = "image-guided"
+        return {"ok": True, "geometry": geometry, "diagnostics": diagnostics}
+
     def fetch_preview(self, plot, snapshot):
         if not self.enabled:
             return None
@@ -1316,6 +1380,62 @@ def geometry_bounds(geometry):
     return (min_lon, min_lat, max_lon, max_lat)
 
 
+def geometry_area_hectares(geometry):
+    ring = ((geometry or {}).get("coordinates") or [[]])[0]
+    if len(ring) < 4:
+        return 0.0
+    unique = ring[:-1] if ring[0] == ring[-1] else ring
+    if len(unique) < 3:
+        return 0.0
+    center = centroid_from_geometry(geometry)
+    if not center:
+        return 0.0
+    meters_per_degree_lat = 111320
+    meters_per_degree_lon = max(1.0, 111320 * math.cos((center["lat"] * math.pi) / 180))
+    twice_area = 0.0
+    for index, current in enumerate(unique):
+        nxt = unique[(index + 1) % len(unique)]
+        x1 = (float(current[0]) - center["lon"]) * meters_per_degree_lon
+        y1 = (float(current[1]) - center["lat"]) * meters_per_degree_lat
+        x2 = (float(nxt[0]) - center["lon"]) * meters_per_degree_lon
+        y2 = (float(nxt[1]) - center["lat"]) * meters_per_degree_lat
+        twice_area += x1 * y2 - x2 * y1
+    return abs(twice_area / 2.0) / 10000.0
+
+
+def scale_geometry_to_target_area(geometry, target_hectares):
+    target_hectares = max(0.0, float(target_hectares or 0))
+    measured = geometry_area_hectares(geometry)
+    if not target_hectares or not measured:
+        return geometry
+    factor = math.sqrt(target_hectares / measured)
+    factor = max(0.72, min(1.38, factor))
+    if abs(factor - 1.0) < 0.02:
+        return geometry
+    center = centroid_from_geometry(geometry)
+    if not center:
+        return geometry
+    scaled_ring = []
+    for lon, lat in ((geometry.get("coordinates") or [[]])[0][:-1]):
+        scaled_ring.append([
+            center["lon"] + (float(lon) - center["lon"]) * factor,
+            center["lat"] + (float(lat) - center["lat"]) * factor,
+        ])
+    return {"type": "Polygon", "coordinates": [_close_ring(scaled_ring)]}
+
+
+def build_bbox_from_center(center, hectares, expansion=1.0):
+    lat = float(center.get("lat", 0) or 0)
+    lon = float(center.get("lon", 0) or 0)
+    if not lat and not lon:
+        return None
+    hectares = max(1.0, float(hectares or 1))
+    half_side_meters = max(110.0, ((hectares * 10000) ** 0.5) / 2.0) * max(1.0, float(expansion or 1.0))
+    lat_delta = half_side_meters / 111320
+    lon_delta = half_side_meters / (111320 * max(0.2, abs(math.cos((lat * math.pi) / 180))))
+    return [lon - lon_delta, lat - lat_delta, lon + lon_delta, lat + lat_delta]
+
+
 def build_plot_bbox(plot):
     geometry = normalize_polygon_geometry(plot.get("geometry"))
     if geometry:
@@ -1356,6 +1476,33 @@ def build_plot_aoi(plot):
     }
 
 
+def build_plot_for_suggestion(payload, user):
+    lat_value = payload.get("lat")
+    lon_value = payload.get("lon")
+    center = {
+        "lat": float(lat_value) if lat_value not in (None, "") else 0.0,
+        "lon": float(lon_value) if lon_value not in (None, "") else 0.0,
+    }
+    geometry = normalize_polygon_geometry(payload.get("geometry"))
+    if geometry:
+        centroid = centroid_from_geometry(geometry)
+        if centroid:
+            center = centroid
+    return {
+        "id": "PLOT-SUGGESTION",
+        "name": str(payload.get("plotName") or "Area em edicao").strip() or "Area em edicao",
+        "farmName": str(payload.get("farmName") or user.get("farmName") or "Fazenda").strip() or "Fazenda",
+        "crop": str(payload.get("crop") or "Soja").strip() or "Soja",
+        "hectares": max(1, int(float(payload.get("hectares", 0) or 0) or 1)),
+        "municipality": str(payload.get("municipality") or "").strip(),
+        "center": center,
+        "geometry": geometry,
+        "agronomist": user.get("name", ""),
+        "whatsapp": user.get("whatsapp", ""),
+        "notes": str(payload.get("notes") or "").strip(),
+    }
+
+
 def enrich_snapshot_visual(plot, snapshot):
     live_preview = REGISTRY.satellite_images.fetch_preview(plot, snapshot)
     if live_preview:
@@ -1386,6 +1533,133 @@ def enrich_snapshot_visual(plot, snapshot):
         "Sem credencial externa configurada, a analise segue usando o fluxo local e a imagem real aparece apenas no mapa base.",
     )
     snapshot.setdefault("ndviStats", None)
+
+
+def infer_geometry_from_ndvi_mask(image_bytes, bbox, target_hectares):
+    image = Image.open(io.BytesIO(image_bytes)).convert("L")
+    width, height = image.size
+    pixels = image.load()
+    center_x = width // 2
+    center_y = height // 2
+
+    # Find the brightest usable seed close to the center so the flood fill starts inside the crop when possible.
+    seed_x, seed_y = center_x, center_y
+    best_value = -1
+    for dy in range(-18, 19):
+        for dx in range(-18, 19):
+            x = min(width - 1, max(0, center_x + dx))
+            y = min(height - 1, max(0, center_y + dy))
+            value = int(pixels[x, y])
+            distance_penalty = abs(dx) + abs(dy)
+            score = value - distance_penalty * 1.2
+            if score > best_value:
+                best_value = score
+                seed_x, seed_y = x, y
+
+    bbox_width_m = abs(bbox[2] - bbox[0]) * 111320 * max(0.2, abs(math.cos((((bbox[1] + bbox[3]) / 2) * math.pi) / 180)))
+    bbox_height_m = abs(bbox[3] - bbox[1]) * 111320
+    bbox_area_ha = max(1.0, (bbox_width_m * bbox_height_m) / 10000.0)
+    target_pixels = max(12, int((float(target_hectares or 1) / bbox_area_ha) * width * height))
+
+    best_mask = None
+    best_threshold = None
+    best_score = None
+    best_region_size = 0
+
+    for threshold in range(210, 54, -10):
+        if int(pixels[seed_x, seed_y]) < threshold:
+            continue
+        mask, region_size = flood_fill_region(pixels, width, height, seed_x, seed_y, threshold)
+        if region_size < 10:
+            continue
+        relative_error = abs(region_size - target_pixels) / max(1, target_pixels)
+        compactness_penalty = region_edge_penalty(mask, width, height)
+        score = relative_error + compactness_penalty
+        if best_score is None or score < best_score:
+            best_score = score
+            best_mask = mask
+            best_threshold = threshold
+            best_region_size = region_size
+
+    if not best_mask:
+        return None, {"reason": "no-crop-region"}
+
+    polygon = radial_polygon_from_mask(best_mask, width, height, bbox)
+    if not polygon:
+        return None, {"reason": "no-polygon"}
+
+    diagnostics = {
+        "seedPixel": [seed_x, seed_y],
+        "seedValue": int(pixels[seed_x, seed_y]),
+        "threshold": int(best_threshold),
+        "targetPixels": int(target_pixels),
+        "regionPixels": int(best_region_size),
+        "bboxAreaHa": round(bbox_area_ha, 1),
+    }
+    return polygon, diagnostics
+
+
+def flood_fill_region(pixels, width, height, seed_x, seed_y, threshold):
+    queue = [(seed_x, seed_y)]
+    visited = set()
+    region = set()
+    while queue:
+        x, y = queue.pop()
+        if (x, y) in visited:
+            continue
+        visited.add((x, y))
+        if x < 0 or y < 0 or x >= width or y >= height:
+            continue
+        if int(pixels[x, y]) < threshold:
+            continue
+        region.add((x, y))
+        queue.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
+    return region, len(region)
+
+
+def region_edge_penalty(mask, width, height):
+    if not mask:
+        return 1.0
+    touches_edge = sum(
+        1
+        for x, y in mask
+        if x in (0, width - 1) or y in (0, height - 1)
+    )
+    return min(0.6, touches_edge / max(1, len(mask)))
+
+
+def radial_polygon_from_mask(mask, width, height, bbox):
+    if not mask:
+        return None
+    average_x = sum(x for x, _ in mask) / len(mask)
+    average_y = sum(y for _, y in mask) / len(mask)
+    max_radius = int(math.hypot(width, height))
+    points = []
+    for angle_index in range(16):
+        angle = (2 * math.pi * angle_index) / 16.0
+        last_inside = None
+        for radius in range(1, max_radius):
+            x = int(round(average_x + math.cos(angle) * radius))
+            y = int(round(average_y + math.sin(angle) * radius))
+            if x < 0 or y < 0 or x >= width or y >= height or (x, y) not in mask:
+                break
+            last_inside = (x, y)
+        if last_inside:
+            points.append(pixel_to_lnglat(last_inside[0], last_inside[1], width, height, bbox))
+    deduped = []
+    for point in points:
+        if not deduped or abs(point[0] - deduped[-1][0]) > 1e-6 or abs(point[1] - deduped[-1][1]) > 1e-6:
+            deduped.append(point)
+    if len(deduped) < 5:
+        return None
+    return {"type": "Polygon", "coordinates": [_close_ring(deduped)]}
+
+
+def pixel_to_lnglat(x, y, width, height, bbox):
+    min_lon, min_lat, max_lon, max_lat = bbox
+    lon = min_lon + (x / max(1, width - 1)) * (max_lon - min_lon)
+    lat = max_lat - (y / max(1, height - 1)) * (max_lat - min_lat)
+    return [round(lon, 6), round(lat, 6)]
 
 
 class CampoSatHandler(SimpleHTTPRequestHandler):
@@ -1612,6 +1886,29 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     if alert:
                         alerts.append(alert["id"])
             self.send_json({"updated": updated, "alerts": alerts})
+            return
+
+        if parsed.path == "/api/suggest-geometry":
+            plot = build_plot_for_suggestion(payload, user)
+            suggestion = REGISTRY.satellite_images.suggest_geometry(plot)
+            if suggestion.get("ok"):
+                self.send_json(
+                    {
+                        "geometry": suggestion["geometry"],
+                        "suggestion": suggestion.get("diagnostics", {}),
+                    }
+                )
+                return
+            self.send_json(
+                {
+                    "geometry": None,
+                    "suggestion": {
+                        "mode": "fallback-local",
+                        "reason": suggestion.get("reason", "unavailable"),
+                        "source": "Fluxo local do CampoSat",
+                    },
+                }
+            )
             return
 
         if parsed.path == "/api/reset":

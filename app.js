@@ -2327,7 +2327,7 @@ function renderFormView() {
                     <button class="button-secondary" type="button" data-action="suggest-geometry-points">Recorte assistido</button>
                     <button class="button-secondary" type="button" data-action="clear-geometry-points">Limpar desenho</button>
                   </div>
-                  <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido", arraste os pontos e use os botoes + nas bordas para colocar novos pontos onde faltar detalhe.</p>
+                  <p class="tiny">Dica: clique ao redor da borda do talhao. Se quiser ganhar tempo, use "Recorte assistido": primeiro tentamos a imagem do satelite e, se ela nao vier, voltamos para a sugestao por centro e hectares.</p>
                   <p class="tiny">Quando o contorno fecha, escurecemos a parte de fora para a borda ficar mais clara em cima da imagem.</p>
                   ${drawAdvice}
                 </div>
@@ -2851,6 +2851,33 @@ function buildSuggestedGeometryPoints() {
   return localRingToCoordinates(center, ring, bearing).slice(0, -1).map((coordinate) => [Number(coordinate[0].toFixed(6)), Number(coordinate[1].toFixed(6))]);
 }
 
+async function requestImageGuidedSuggestion() {
+  const draft = ensureFormDraft(getCurrentUser(), getActiveAgronomist());
+  if (state.offlineMode) return null;
+  const lat = Number(draft.lat);
+  const lon = Number(draft.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
+    return null;
+  }
+  try {
+    const result = await api("/api/suggest-geometry", {
+      method: "POST",
+      body: {
+        plotName: draft.plotName,
+        farmName: draft.farmName,
+        crop: draft.crop,
+        hectares: Number(draft.hectares || 0),
+        municipality: draft.municipality,
+        lat,
+        lon,
+      }
+    });
+    return result;
+  } catch (error) {
+    return null;
+  }
+}
+
 function measureGeometryAreaHectares(geometry) {
   const ring = geometry?.coordinates?.[0] || [];
   if (ring.length < 4) return 0;
@@ -2880,6 +2907,15 @@ function buildSuggestionWarnings(draft, geometry) {
   const measuredHa = geometry ? measureGeometryAreaHectares(geometry) : 0;
   const diffPercent = expectedHa > 0 && measuredHa > 0 ? (Math.abs(measuredHa - expectedHa) / expectedHa) * 100 : null;
   const warnings = [];
+  const suggestionMeta = state.form.suggestionMeta || null;
+
+  if (suggestionMeta?.mode === "image-guided") {
+    warnings.push({
+      tone: "low",
+      title: "A imagem ajudou a encontrar a mancha principal",
+      text: "Essa sugestao tentou seguir a vegetacao ao redor do centro informado. Ainda assim, o ajuste final continua importante nas bordas."
+    });
+  }
 
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) {
     warnings.push({
@@ -2929,6 +2965,14 @@ function buildSuggestionWarnings(draft, geometry) {
     });
   }
 
+  if (suggestionMeta?.mode === "fallback-local") {
+    warnings.push({
+      tone: "high",
+      title: "Nao conseguimos ler a imagem real nesta tentativa",
+      text: "O sistema voltou para a sugestao local por centro e hectares. Isso funciona como ponto de partida, mas costuma pedir mais revisao manual."
+    });
+  }
+
   return warnings.slice(0, 5);
 }
 
@@ -2946,6 +2990,7 @@ function buildSuggestionSummary(draft, geometry) {
   else if (diffPercent > 10) score -= 9;
   if (state.form.geometryOrigin === "auto") score -= 8;
   if (state.form.geometryOrigin === "assistida") score += 4;
+  if (state.form.geometryOrigin === "vision") score += 10;
   if (state.form.geometryOrigin === "imported") score += 12;
   if (state.form.geometryOrigin === "manual") score += 8;
   score = Math.max(22, Math.min(92, score));
@@ -2962,6 +3007,8 @@ function buildSuggestionSummary(draft, geometry) {
 
   const sourceLabel = state.form.geometryOrigin === "assistida"
     ? "Sugestao assistida"
+    : state.form.geometryOrigin === "vision"
+      ? "Analise da imagem"
     : state.form.geometryOrigin === "imported"
       ? "Arquivo importado"
       : state.form.geometryOrigin === "manual"
@@ -2982,12 +3029,16 @@ function buildSuggestionSummary(draft, geometry) {
 
 function renderSuggestionSummaryCard(draft, geometry) {
   const summary = buildSuggestionSummary(draft, geometry);
+  const suggestionMeta = state.form.suggestionMeta || null;
   const diffCopy = summary.expectedHa > 0 && summary.measuredHa > 0
     ? `${summary.measuredHa.toFixed(1)} ha no desenho atual`
     : "Sem area suficiente para comparar ainda";
   const deltaCopy = summary.expectedHa > 0 && summary.measuredHa > 0
     ? `${Math.abs(summary.measuredHa - summary.expectedHa).toFixed(1)} ha de diferenca`
     : "Informe os hectares para travar melhor a sugestao";
+  const leadCopy = suggestionMeta?.mode === "image-guided"
+    ? "Nesta tentativa, o sistema usou a imagem do satelite para encontrar a mancha de vegetacao mais forte ao redor do centro informado e depois ajustou a borda para ficar perto dos hectares cadastrados."
+    : "Hoje essa sugestao ainda nao enxerga pixel por pixel como um operador humano. Ela usa localizacao central, hectares e um formato provavel para entregar uma primeira borda que voce pode revisar no mapa.";
   return `
     <div class="geometry-advice-shell">
       <div class="geometry-advice-card">
@@ -2998,7 +3049,7 @@ function renderSuggestionSummaryCard(draft, geometry) {
           </div>
           <span class="geometry-confidence-pill tone-${summary.tone}">${summary.sourceLabel}</span>
         </div>
-        <p class="geometry-advice-copy">Hoje essa sugestao ainda nao enxerga pixel por pixel como um operador humano. Ela usa localizacao central, hectares e um formato provavel para entregar uma primeira borda que voce pode revisar no mapa.</p>
+        <p class="geometry-advice-copy">${leadCopy}</p>
         <div class="geometry-advice-metrics">
           <div class="metric-box">
             <span class="metric-label">Area esperada</span>
@@ -3016,6 +3067,7 @@ function renderSuggestionSummaryCard(draft, geometry) {
             <p class="metric-help">${deltaCopy}</p>
           </div>
         </div>
+        ${suggestionMeta?.source ? `<p class="tiny" style="margin-top: 14px;">Fonte desta sugestao: ${escapeHtml(suggestionMeta.source)}</p>` : ""}
       </div>
       <div class="geometry-warning-list">
         ${summary.warnings.map((warning) => `
@@ -3069,6 +3121,11 @@ function syncDraftCenterFromGeometry(geometry) {
 function syncPointsFromGeometry(geometry) {
   const ring = geometry?.coordinates?.[0] || [];
   state.form.points = ring.length > 1 ? ring.slice(0, -1).map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])]) : [];
+}
+
+function pointsFromGeometry(geometry) {
+  const ring = geometry?.coordinates?.[0] || [];
+  return ring.length > 1 ? ring.slice(0, -1).map((coordinate) => [Number(coordinate[0]), Number(coordinate[1])]) : [];
 }
 
 function isShapeZipFile(file) {
@@ -3219,14 +3276,31 @@ async function handleClick(event) {
 
   const suggestGeometryPointsButton = event.target.closest("[data-action='suggest-geometry-points']");
   if (suggestGeometryPointsButton) {
+    const imageSuggestion = await requestImageGuidedSuggestion();
+    const suggestedGeometry = imageSuggestion?.geometry || null;
+    if (suggestedGeometry) {
+      const suggestedPoints = pointsFromGeometry(suggestedGeometry);
+      state.form.geometryOrigin = "vision";
+      state.form.suggestionMeta = {
+        ...(imageSuggestion.suggestion || {}),
+        createdAt: nowLabel(),
+        points: suggestedPoints.length
+      };
+      applyFormPoints(suggestedPoints, { trackHistory: true });
+      pushToast("Recorte pela imagem pronto", "Usamos a imagem do satelite como base inicial. Agora vale revisar os avisos e ajustar a borda onde precisar.");
+      render();
+      return;
+    }
     const suggestedPoints = buildSuggestedGeometryPoints();
     state.form.geometryOrigin = "assistida";
     state.form.suggestionMeta = {
+      ...(imageSuggestion?.suggestion || {}),
       createdAt: nowLabel(),
-      points: suggestedPoints.length
+      points: suggestedPoints.length,
+      mode: (imageSuggestion?.suggestion || {}).mode || "fallback-local"
     };
     applyFormPoints(suggestedPoints, { trackHistory: true });
-    pushToast("Recorte assistido pronto", "Montamos uma primeira borda usando o centro e os hectares. Agora vale revisar os avisos e ajustar onde precisar.");
+    pushToast("Recorte assistido pronto", "Nao conseguimos usar a imagem real nesta tentativa, entao montamos uma primeira borda por centro e hectares.");
     render();
     return;
   }
