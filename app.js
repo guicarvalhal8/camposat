@@ -3204,7 +3204,19 @@ async function readGeometryFile(file) {
 
 function renderMarketCards() {
   if (!state.market) return renderEmptyState("Mercado indisponivel", "A API ainda nao retornou dados de referencia.");
+  const referenceDate = state.market.updatedAt ? formatDateTime(state.market.updatedAt) : "Sem data informada";
   return `
+    <div class="market-module-summary">
+      <div>
+        <span class="metric-label">Referencia atual</span>
+        <strong class="market-module-date">${referenceDate}</strong>
+        <p>Por enquanto, o Mercado acompanha apenas precos de Goias. A base ja esta pronta para abrir novas regioes depois.</p>
+      </div>
+      <div class="market-module-tags">
+        <span class="market-pill">Cobertura atual: Goias</span>
+        <span class="market-pill market-pill-muted">Expansao futura: outras regioes</span>
+      </div>
+    </div>
     <div class="metric-box">
       <span class="metric-label">${state.market.soy.label}</span>
       <span class="metric-value">${formatCurrency(state.market.soy.price)}</span>

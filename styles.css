@@ -1948,6 +1948,57 @@ optgroup {
   color: var(--muted);
 }
 
+.market-module-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(103, 241, 201, 0.06), rgba(255, 255, 255, 0.02));
+}
+
+.market-module-date {
+  display: block;
+  margin-top: 6px;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.market-module-summary p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+  max-width: 520px;
+}
+
+.market-module-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.market-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 241, 201, 0.22);
+  background: rgba(103, 241, 201, 0.1);
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.market-pill-muted {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+}
+
 .market-context-note {
   grid-column: 1 / -1;
   padding: 14px 16px;
@@ -2067,6 +2118,14 @@ optgroup {
 
   .auth-grid {
     grid-template-columns: 1fr;
+  }
+
+  .market-module-summary {
+    flex-direction: column;
+  }
+
+  .market-module-tags {
+    justify-content: flex-start;
   }
 }
 
