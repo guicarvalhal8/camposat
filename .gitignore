@@ -6,3 +6,4 @@ build/
 *.log
 *.db
 .env.local
+data/market_cache.json

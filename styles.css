@@ -2028,6 +2028,11 @@ optgroup {
   background: rgba(103, 241, 201, 0.1);
 }
 
+.market-origin-pill.origin-cached {
+  border-color: rgba(126, 217, 255, 0.22);
+  background: rgba(126, 217, 255, 0.1);
+}
+
 .market-origin-pill.origin-fallback {
   border-color: rgba(255, 181, 92, 0.22);
   background: rgba(255, 181, 92, 0.12);

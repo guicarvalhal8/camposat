@@ -10,6 +10,7 @@ import math
 import os
 import secrets
 import sqlite3
+import subprocess
 import unicodedata
 from datetime import datetime, timedelta
 from http import HTTPStatus
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 SEED_PATH = DATA_DIR / "seed_state.json"
 DB_PATH = DATA_DIR / "camposat.db"
+MARKET_CACHE_PATH = DATA_DIR / "market_cache.json"
 ENV_PATH = ROOT / ".env.local"
 SESSION_COOKIE_NAME = "camposat_session"
 SESSIONS = {}
@@ -657,10 +659,13 @@ class MockWeatherProvider:
 class ConabMarketProvider:
     WEEKLY_UF_URL = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalUF.txt"
     COVERAGE_UF = "GO"
+    REQUEST_TIMEOUT = 18
+    COMMAND_TIMEOUT = 20
 
     TRACKED_PRODUCTS = [
         {
             "slug": "soy",
+            "productId": "4744",
             "product": "SOJA",
             "classification": "EM GRAOS",
             "label": "Soja saca 60kg",
@@ -668,6 +673,7 @@ class ConabMarketProvider:
         },
         {
             "slug": "corn",
+            "productId": "4742",
             "product": "MILHO",
             "classification": "EM GRAOS",
             "label": "Milho saca 60kg",
@@ -675,6 +681,7 @@ class ConabMarketProvider:
         },
         {
             "slug": "sorghum",
+            "productId": "4745",
             "product": "SORGO",
             "classification": "EM GRAOS",
             "label": "Sorgo saca 60kg",
@@ -682,7 +689,7 @@ class ConabMarketProvider:
         },
     ]
 
-    PREFERRED_LEVELS = ["PRECO RECEBIDO P/ PR", "ATACADO", "VAREJO"]
+    PREFERRED_LEVELS = ["RECEBIDO P/ PR", "PAGO PELO PROD", "ATACADO", "VAREJO"]
 
     def __init__(self):
         self._latest_feed = None
@@ -697,14 +704,26 @@ class ConabMarketProvider:
     def fetch_market_feed(self):
         rows = self._fetch_rows()
         if not rows:
+            cached_feed = self._load_cached_feed()
+            if cached_feed:
+                self._latest_feed = copy.deepcopy(cached_feed)
+                return cached_feed
             return None
 
         items = [self._build_item(rows, config) for config in self.TRACKED_PRODUCTS]
         available_items = [item for item in items if item.get("available")]
         if not available_items:
+            cached_feed = self._load_cached_feed()
+            if cached_feed:
+                self._latest_feed = copy.deepcopy(cached_feed)
+                return cached_feed
             return None
 
-        latest_period = max((item["rawPeriodKey"] for item in available_items), default=None)
+        latest_period = max(
+            (item["rawPeriodKey"] for item in available_items),
+            key=lambda period: (period.get("year", 0), period.get("month", 0), period.get("week", 0)),
+            default=None,
+        )
         updated_at = now_label()
         overview = {
             "updatedAt": updated_at,
@@ -725,18 +744,12 @@ class ConabMarketProvider:
             "overview": overview,
         }
         self._latest_feed = copy.deepcopy(feed)
+        self._save_cached_feed(feed)
         return feed
 
     def _fetch_rows(self):
-        request = urllib_request.Request(
-            self.WEEKLY_UF_URL,
-            headers={"User-Agent": "CampoSat/1.0"},
-            method="GET",
-        )
-        try:
-            with urllib_request.urlopen(request, timeout=30) as response:
-                content = response.read().decode("utf-8-sig", errors="replace")
-        except Exception:
+        content = self._download_weekly_content()
+        if not content:
             return []
 
         reader = csv.DictReader(content.splitlines(), delimiter=";")
@@ -751,13 +764,140 @@ class ConabMarketProvider:
             rows.append(row)
         return rows
 
-    def _build_item(self, rows, config):
-        matching = [
-            row
-            for row in rows
-            if row.get("_product_key") == self._normalize_key(config["product"])
-            and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
+    def _download_weekly_content(self):
+        fetchers = (
+            self._download_with_urllib,
+            self._download_with_curl,
+            self._download_with_powershell,
+        )
+        for fetcher in fetchers:
+            content = fetcher()
+            if content and "produto" in content.lower():
+                return content
+        return ""
+
+    def _download_with_urllib(self):
+        request = urllib_request.Request(
+            self.WEEKLY_UF_URL,
+            headers={"User-Agent": "CampoSat/1.0"},
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=self.REQUEST_TIMEOUT) as response:
+                return response.read().decode("utf-8-sig", errors="replace")
+        except Exception:
+            return ""
+
+    def _download_with_curl(self):
+        command = [
+            "curl.exe",
+            "-L",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            str(self.COMMAND_TIMEOUT),
+            self.WEEKLY_UF_URL,
         ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=self.COMMAND_TIMEOUT + 2,
+                check=False,
+            )
+        except Exception:
+            return ""
+        if result.returncode != 0:
+            return ""
+        return (result.stdout or "").lstrip("\ufeff")
+
+    def _download_with_powershell(self):
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "$ProgressPreference='SilentlyContinue'; "
+                f"(Invoke-WebRequest -UseBasicParsing '{self.WEEKLY_UF_URL}' -TimeoutSec {self.COMMAND_TIMEOUT}).Content"
+            ),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=self.COMMAND_TIMEOUT + 3,
+                check=False,
+            )
+        except Exception:
+            return ""
+        if result.returncode != 0:
+            return ""
+        return (result.stdout or "").lstrip("\ufeff")
+
+    def _save_cached_feed(self, feed):
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "savedAt": now_label(),
+                "feed": feed,
+            }
+            MARKET_CACHE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            return
+
+    def _load_cached_feed(self):
+        if not MARKET_CACHE_PATH.exists():
+            return None
+        try:
+            payload = json.loads(MARKET_CACHE_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        feed = payload.get("feed")
+        if not isinstance(feed, dict):
+            return None
+
+        cached_feed = copy.deepcopy(feed)
+        saved_at = payload.get("savedAt") or cached_feed.get("updatedAt") or now_label()
+        cached_feed["sourceMode"] = "official-cache"
+        cached_feed["sourceLabel"] = "Conab - ultima leitura oficial salva"
+        cached_feed["sourceNote"] = (
+            "A consulta ao arquivo oficial nao respondeu agora. Mantivemos a ultima leitura oficial salva para a aba continuar util."
+        )
+        cached_feed["cacheSavedAt"] = saved_at
+        cached_feed["description"] = (
+            "Esta rodada abriu a ultima leitura oficial salva da Conab. Assim voce continua vendo uma referencia oficial recente mesmo sem resposta ao vivo."
+        )
+        cached_feed["items"] = [self._mark_item_as_cached(item) for item in cached_feed.get("items", [])]
+        return cached_feed
+
+    def _mark_item_as_cached(self, item):
+        updated_item = copy.deepcopy(item)
+        updated_item["sourceMode"] = "official-cache"
+        return updated_item
+
+    def _build_item(self, rows, config):
+        config_product_id = str(config.get("productId") or "").strip()
+        if config_product_id:
+            matching = [row for row in rows if str(row.get("id_produto") or "").strip() == config_product_id]
+        else:
+            matching = [
+                row
+                for row in rows
+                if row.get("_product_key") == self._normalize_key(config["product"])
+                and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
+            ]
+
+        if not matching:
+            matching = [
+                row
+                for row in rows
+                if row.get("_product_key") == self._normalize_key(config["product"])
+                and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
+            ]
         if not matching:
             return {
                 "slug": config["slug"],
@@ -772,7 +912,8 @@ class ConabMarketProvider:
         chosen_level = None
         level_rows = []
         for level in self.PREFERRED_LEVELS:
-            candidate_rows = [row for row in matching if row.get("_level_key") == self._normalize_key(level)]
+            level_key = self._normalize_key(level)
+            candidate_rows = [row for row in matching if level_key and level_key in row.get("_level_key", "")]
             if candidate_rows:
                 chosen_level = level
                 level_rows = candidate_rows

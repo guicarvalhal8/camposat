@@ -1693,6 +1693,12 @@ function renderView(route, activePlot) {
 function renderMarketView() {
   const feed = state.marketPage.data;
   const sourceMode = feed?.sourceMode || (state.marketPage.error ? "fallback" : "official");
+  const sourceLabel =
+    sourceMode === "official"
+      ? "Fonte oficial"
+      : sourceMode === "official-cache"
+        ? "Ultima leitura oficial salva"
+        : "Fallback local";
   return `
     <div class="workspace-grid">
       <section class="panel">
@@ -1742,8 +1748,14 @@ function renderMarketView() {
                     <h3>${feed.title || "Mercado em Goias"}</h3>
                     <p>${feed.description || "Precos organizados para leitura rapida do agronomo."}</p>
                   </div>
-                  <span class="market-origin-pill ${sourceMode === "official" ? "origin-official" : "origin-fallback"}">
-                    ${sourceMode === "official" ? "Fonte oficial" : "Fallback local"}
+                  <span class="market-origin-pill ${
+                    sourceMode === "official"
+                      ? "origin-official"
+                      : sourceMode === "official-cache"
+                        ? "origin-cached"
+                        : "origin-fallback"
+                  }">
+                    ${sourceLabel}
                   </span>
                 </div>
                 <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
@@ -1769,6 +1781,7 @@ function renderMarketView() {
                     <span class="metric-label">Atualizado em</span>
                     <strong>${feed.updatedAt ? formatDateTime(feed.updatedAt) : "--"}</strong>
                     <p>${feed.sourceLabel || "Fonte oficial de precos agropecuarios."}</p>
+                    ${feed.cacheSavedAt ? `<span class="tiny">Ultima leitura salva em ${formatDateTime(feed.cacheSavedAt)}</span>` : ""}
                   </div>
                   <div class="market-source-box">
                     <span class="metric-label">Expansao prevista</span>
