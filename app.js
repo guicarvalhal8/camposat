@@ -35,7 +35,8 @@ const state = {
   marketPage: {
     loading: false,
     error: null,
-    data: null
+    data: null,
+    filter: "all"
   },
   providers: null,
   meta: null,
@@ -1691,6 +1692,7 @@ function renderView(route, activePlot) {
 
 function renderMarketView() {
   const feed = state.marketPage.data;
+  const sourceMode = feed?.sourceMode || (state.marketPage.error ? "fallback" : "official");
   return `
     <div class="workspace-grid">
       <section class="panel">
@@ -1701,6 +1703,15 @@ function renderMarketView() {
             <p>Esta aba puxa os precos pela API do app. Por enquanto, a cobertura esta concentrada em Goias e pode crescer depois para outras regioes.</p>
           </div>
           <div class="card-actions">
+            <label class="toolbar-field market-filter-field">
+              <span>Filtrar cultura</span>
+              <select name="marketFilter">
+                ${renderOption("all", state.marketPage.filter, "Todas")}
+                ${renderOption("soy", state.marketPage.filter, "Soja")}
+                ${renderOption("corn", state.marketPage.filter, "Milho")}
+                ${renderOption("sorghum", state.marketPage.filter, "Sorgo")}
+              </select>
+            </label>
             <button class="button-secondary" type="button" data-action="refresh-market" ${state.marketPage.loading ? "disabled" : ""}>
               ${state.marketPage.loading ? "Atualizando..." : "Atualizar mercado"}
             </button>
@@ -1731,6 +1742,9 @@ function renderMarketView() {
                     <h3>${feed.title || "Mercado em Goias"}</h3>
                     <p>${feed.description || "Precos organizados para leitura rapida do agronomo."}</p>
                   </div>
+                  <span class="market-origin-pill ${sourceMode === "official" ? "origin-official" : "origin-fallback"}">
+                    ${sourceMode === "official" ? "Fonte oficial" : "Fallback local"}
+                  </span>
                 </div>
                 <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
                   ${renderMarketFeedCards(feed)}
@@ -3352,18 +3366,23 @@ function renderMarketCards() {
 }
 
 function renderMarketFeedCards(feed) {
-  const items = Array.isArray(feed?.items) ? feed.items : [];
+  const allItems = Array.isArray(feed?.items) ? feed.items : [];
+  const items = state.marketPage.filter === "all"
+    ? allItems
+    : allItems.filter((item) => item.slug === state.marketPage.filter);
   if (!items.length) {
     return renderEmptyState("Sem precos nessa rodada", "A API do Mercado ainda nao trouxe itens suficientes para montar esse painel.");
   }
   return items
     .map((item) => {
+      const history = Array.isArray(item.history) && item.history.length ? item.history : buildFallbackMarketHistory(item);
       if (!item.available) {
         return `
           <div class="metric-box market-page-card">
             <span class="metric-label">${item.label}</span>
             <span class="metric-value market-empty-price">Sem referencia</span>
             <p class="metric-help">${item.note || "Ainda nao encontramos esse item na cobertura atual da fonte."}</p>
+            <div class="market-history-empty">Historico ainda indisponivel para esse item.</div>
             <span class="tiny market-source">Fonte: ${item.source || "Conab"}</span>
           </div>
         `;
@@ -3374,6 +3393,12 @@ function renderMarketFeedCards(feed) {
           <span class="metric-value">${formatCurrency(item.price)}</span>
           <span class="metric-delta ${item.change >= 0 ? "up" : "down"}">${formatSigned(item.change)}</span>
           <p class="metric-help">${item.summary || describeMarketMove(item.change)}</p>
+          <div class="market-history-block">
+            <div class="sparkline market-sparkline">${renderSparkline(history.map((point) => point.price), item.change >= 0 ? "green" : "red", `market-${item.slug}`)}</div>
+            <div class="market-history-row">
+              ${history.map((point) => `<span>${point.label}: ${formatCurrency(point.price)}</span>`).join("")}
+            </div>
+          </div>
           <div class="market-page-meta">
             <span class="tiny">${item.referenceLabel || "Referencia"}</span>
             <span class="tiny">${item.periodLabel || "--"}</span>
@@ -3383,6 +3408,19 @@ function renderMarketFeedCards(feed) {
       `;
     })
     .join("");
+}
+
+function buildFallbackMarketHistory(item) {
+  const current = Number(item.price || 0);
+  const change = Number(item.change || 0);
+  if (!current) return [];
+  const previous = Number((current - change).toFixed(2));
+  const older = Number((previous - change / 2).toFixed(2));
+  return [
+    { label: "sem -2", price: Math.max(0, older) },
+    { label: "sem -1", price: Math.max(0, previous) },
+    { label: "agora", price: current },
+  ];
 }
 
 function buildOfflineMarketPageData() {
@@ -3405,10 +3443,20 @@ function buildOfflineMarketPageData() {
     coverageNote: "Hoje esta aba acompanha apenas referencias de Goias.",
     sourceLabel: "Fallback local do CampoSat",
     sourceNote: "Quando a rota oficial nao responde, o app cai para os valores locais ja conhecidos para nao deixar a aba vazia.",
+    sourceMode: "fallback",
     updatedAt,
     items: [
-      makeItem("soy", state.market?.soy || { label: "Soja saca 60kg", price: 0, change: 0, source: "Referencia local" }),
-      makeItem("corn", state.market?.corn || { label: "Milho saca 60kg", price: 0, change: 0, source: "Referencia local" })
+      { ...makeItem("soy", state.market?.soy || { label: "Soja saca 60kg", price: 0, change: 0, source: "Referencia local" }), sourceMode: "fallback", history: [] },
+      { ...makeItem("corn", state.market?.corn || { label: "Milho saca 60kg", price: 0, change: 0, source: "Referencia local" }), sourceMode: "fallback", history: [] },
+      {
+        slug: "sorghum",
+        label: "Sorgo saca 60kg",
+        available: false,
+        note: "O fallback local ainda nao traz uma referencia pronta para sorgo.",
+        source: "Fallback local do CampoSat",
+        sourceMode: "fallback",
+        history: []
+      }
     ]
   };
 }
@@ -3809,6 +3857,11 @@ async function handleChange(event) {
       }
       render();
     }
+    return;
+  }
+  if (name === "marketFilter") {
+    state.marketPage.filter = value;
+    render();
     return;
   }
   if (!(name in state.filters)) return;

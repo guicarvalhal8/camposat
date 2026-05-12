@@ -10,6 +10,7 @@ import math
 import os
 import secrets
 import sqlite3
+import unicodedata
 from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -661,27 +662,27 @@ class ConabMarketProvider:
         {
             "slug": "soy",
             "product": "SOJA",
-            "classification": "EM GRÃOS",
+            "classification": "EM GRAOS",
             "label": "Soja saca 60kg",
             "multiplier": 60.0,
         },
         {
             "slug": "corn",
             "product": "MILHO",
-            "classification": "EM GRÃOS",
+            "classification": "EM GRAOS",
             "label": "Milho saca 60kg",
             "multiplier": 60.0,
         },
         {
             "slug": "sorghum",
             "product": "SORGO",
-            "classification": "EM GRÃOS",
+            "classification": "EM GRAOS",
             "label": "Sorgo saca 60kg",
             "multiplier": 60.0,
         },
     ]
 
-    PREFERRED_LEVELS = ["PREÇO RECEBIDO P/ PR", "ATACADO", "VAREJO"]
+    PREFERRED_LEVELS = ["PRECO RECEBIDO P/ PR", "ATACADO", "VAREJO"]
 
     def __init__(self):
         self._latest_feed = None
@@ -717,6 +718,7 @@ class ConabMarketProvider:
             "coverageNote": "Nesta primeira fase, a aba acompanha referencias da Conab para Goias.",
             "sourceLabel": "Conab - Precos agropecuarios semanal por UF",
             "sourceNote": "Usamos o arquivo semanal oficial da Conab por UF e filtramos os itens mais relevantes para a rotina do app em Goias.",
+            "sourceMode": "official",
             "periodLabel": latest_period["label"] if latest_period else "",
             "updatedAt": updated_at,
             "items": items,
@@ -743,6 +745,9 @@ class ConabMarketProvider:
             row = {key.strip(): (value or "").strip() for key, value in raw_row.items()}
             if row.get("uf") != self.COVERAGE_UF:
                 continue
+            row["_product_key"] = self._normalize_key(row.get("produto"))
+            row["_classification_key"] = self._normalize_key(row.get("classificao_produto"))
+            row["_level_key"] = self._normalize_key(row.get("dsc_nivel_comercializacao"))
             rows.append(row)
         return rows
 
@@ -750,7 +755,8 @@ class ConabMarketProvider:
         matching = [
             row
             for row in rows
-            if row.get("produto") == config["product"] and row.get("classificao_produto") == config["classification"]
+            if row.get("_product_key") == self._normalize_key(config["product"])
+            and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
         ]
         if not matching:
             return {
@@ -759,19 +765,21 @@ class ConabMarketProvider:
                 "available": False,
                 "note": "A fonte oficial ainda nao trouxe esse item para a cobertura atual em Goias.",
                 "source": "Conab - semanal por UF",
+                "sourceMode": "official",
+                "history": [],
             }
 
         chosen_level = None
         level_rows = []
         for level in self.PREFERRED_LEVELS:
-            candidate_rows = [row for row in matching if row.get("dsc_nivel_comercializacao") == level]
+            candidate_rows = [row for row in matching if row.get("_level_key") == self._normalize_key(level)]
             if candidate_rows:
                 chosen_level = level
                 level_rows = candidate_rows
                 break
         if not level_rows:
             level_rows = matching
-            chosen_level = matching[0].get("dsc_nivel_comercializacao", "Referência oficial")
+            chosen_level = self._clean_label(matching[0].get("dsc_nivel_comercializacao")) or "Referencia oficial"
 
         ordered_rows = sorted(level_rows, key=self._period_sort_key)
         latest = ordered_rows[-1]
@@ -782,6 +790,13 @@ class ConabMarketProvider:
         previous_price = round(previous_value * config["multiplier"], 2)
         change = round(current_price - previous_price, 2)
         period = self._period_label(latest)
+        history = [
+            {
+                "label": self._short_period_label(row),
+                "price": round(self._parse_decimal(row.get("valor_produto_kg")) * config["multiplier"], 2),
+            }
+            for row in ordered_rows[-4:]
+        ]
         return {
             "slug": config["slug"],
             "label": config["label"],
@@ -789,10 +804,12 @@ class ConabMarketProvider:
             "price": current_price,
             "previousPrice": previous_price,
             "change": change,
-            "referenceLabel": chosen_level.title(),
+            "referenceLabel": self._title_label(chosen_level),
             "periodLabel": period,
             "summary": self._describe_change(change, chosen_level),
             "source": "Conab - semanal por UF",
+            "sourceMode": "official",
+            "history": history,
             "rawPeriodKey": {
                 "year": int(latest.get("ano") or 0),
                 "month": int(latest.get("mes") or 0),
@@ -827,6 +844,15 @@ class ConabMarketProvider:
     def _period_label(self, row):
         return row.get("data_inicial_final_semana") or "Periodo nao informado"
 
+    def _short_period_label(self, row):
+        raw = self._period_label(row)
+        start = raw.split(" - ")[0].strip()
+        pieces = start.split("-")
+        if len(pieces) == 3:
+            day, month, _year = pieces
+            return f"{day}/{month}"
+        return start or "Periodo"
+
     def _parse_decimal(self, value):
         normalized = str(value or "0").strip().replace(".", "").replace(",", ".")
         try:
@@ -835,12 +861,26 @@ class ConabMarketProvider:
             return 0.0
 
     def _describe_change(self, change, chosen_level):
-        level = chosen_level.lower() if chosen_level else "referência oficial"
+        level = self._clean_label(chosen_level).lower() if chosen_level else "referencia oficial"
         if change > 0:
             return f"Subiu em relacao ao periodo anterior dentro de {level}."
         if change < 0:
             return f"Caiu em relacao ao periodo anterior dentro de {level}."
         return f"Ficou no mesmo nivel no recorte de {level}."
+
+    def _normalize_key(self, value):
+        text = str(value or "").strip().upper().replace("?", "A")
+        text = unicodedata.normalize("NFD", text)
+        text = "".join(char for char in text if unicodedata.category(char) != "Mn")
+        return " ".join(text.split())
+
+    def _clean_label(self, value):
+        text = str(value or "").replace("?", "a").strip()
+        return " ".join(text.split())
+
+    def _title_label(self, value):
+        label = self._clean_label(value).lower()
+        return " ".join(part.capitalize() for part in label.split())
 
 
 class MockWhatsAppProvider:
@@ -2149,6 +2189,8 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "periodLabel": seed_market.get("updatedAt", now_label()),
                     "summary": "A fonte externa nao respondeu nesta tentativa, entao mantivemos a ultima referencia local.",
                     "source": seed_market["soy"]["source"],
+                    "sourceMode": "fallback",
+                    "history": [],
                 },
                 {
                     "slug": "corn",
@@ -2160,6 +2202,8 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "periodLabel": seed_market.get("updatedAt", now_label()),
                     "summary": "A fonte externa nao respondeu nesta tentativa, entao mantivemos a ultima referencia local.",
                     "source": seed_market["corn"]["source"],
+                    "sourceMode": "fallback",
+                    "history": [],
                 },
                 {
                     "slug": "sorghum",
@@ -2167,6 +2211,8 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "available": False,
                     "note": "Ainda nao existe referencia pronta no fallback local para esse item.",
                     "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
                 },
             ]
             self.send_json(
@@ -2177,6 +2223,7 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "coverageNote": "Por enquanto, a aba acompanha apenas referencias de Goias.",
                     "sourceLabel": "Fallback local do CampoSat",
                     "sourceNote": "Quando a fonte externa da Conab nao responde, o backend entrega as referencias locais para manter a aba usavel.",
+                    "sourceMode": "fallback",
                     "updatedAt": now_label(),
                     "items": fallback_items,
                     "overview": REGISTRY.market.snapshot(seed_market),

@@ -2007,11 +2007,61 @@ optgroup {
   min-height: 208px;
 }
 
+.market-filter-field {
+  min-width: 220px;
+}
+
+.market-origin-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.market-origin-pill.origin-official {
+  border-color: rgba(103, 241, 201, 0.22);
+  background: rgba(103, 241, 201, 0.1);
+}
+
+.market-origin-pill.origin-fallback {
+  border-color: rgba(255, 181, 92, 0.22);
+  background: rgba(255, 181, 92, 0.12);
+}
+
 .market-page-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
+}
+
+.market-history-block {
+  margin-top: 12px;
+}
+
+.market-sparkline {
+  height: 46px;
+}
+
+.market-history-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.market-history-empty {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
 }
 
 .market-empty-price {
