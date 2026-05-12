@@ -361,6 +361,7 @@ def seed_market_snapshot():
 def seed_providers():
     providers = copy.deepcopy(load_seed_state()["providers"])
     satellite = providers.get("satellite", {})
+    weather = providers.get("weather", {})
     satellite["name"] = "Sentinel Hub"
     satellite["mode"] = "real-preview" if REGISTRY.satellite_images.enabled else "aguardando-credencial"
     satellite["status"] = "ready" if REGISTRY.satellite_images.enabled else "pending"
@@ -369,7 +370,12 @@ def seed_providers():
         if REGISTRY.satellite_images.enabled
         else "Falta configurar SENTINELHUB_CLIENT_ID e SENTINELHUB_CLIENT_SECRET no .env.local."
     )
+    weather["name"] = "Open-Meteo"
+    weather["mode"] = "forecast-api"
+    weather["status"] = "ready"
+    weather["note"] = "Clima real por coordenada com fallback local se a consulta externa falhar."
     providers["satellite"] = satellite
+    providers["weather"] = weather
     return providers
 
 
@@ -643,7 +649,7 @@ def save_plot(connection, plot):
 
 
 class MockWeatherProvider:
-    def generate(self, plot, status, ndvi):
+    def generate(self, plot, status, ndvi, captured_at=None):
         base_temp = 25 if plot["crop"] == "Soja" else 27
         rain = 14 if status == "green" else 5 if status == "yellow" else 1
         humidity = 81 if status == "green" else 66 if status == "yellow" else 54
@@ -653,7 +659,170 @@ class MockWeatherProvider:
             "rainMm": rain,
             "humidity": humidity,
             "windKmh": wind,
+            "source": "Simulacao local do CampoSat",
+            "sourceMode": "fallback",
+            "observedAt": captured_at or now_label(),
         }
+
+
+class OpenMeteoWeatherProvider:
+    FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+    REQUEST_TIMEOUT = 16
+    COMMAND_TIMEOUT = 18
+    CACHE_TTL_SECONDS = 30 * 60
+
+    def __init__(self, fallback_provider):
+        self.fallback_provider = fallback_provider
+        self._cache = {}
+
+    def generate(self, plot, status, ndvi, captured_at=None):
+        center = (plot or {}).get("center") or {}
+        lat = float(center.get("lat") or 0)
+        lon = float(center.get("lon") or 0)
+        if not lat and not lon:
+            return self.fallback_provider.generate(plot, status, ndvi, captured_at)
+
+        cache_key = f"{lat:.3f},{lon:.3f}"
+        cached = self._cache.get(cache_key)
+        now_ts = datetime.now().timestamp()
+        if cached and (now_ts - cached["ts"]) < self.CACHE_TTL_SECONDS:
+            return copy.deepcopy(cached["payload"])
+
+        live_weather = self._fetch_weather(lat, lon)
+        if not live_weather:
+            return self.fallback_provider.generate(plot, status, ndvi, captured_at)
+
+        payload = {
+            "tempC": live_weather["tempC"],
+            "rainMm": live_weather["rainMm"],
+            "humidity": live_weather["humidity"],
+            "windKmh": live_weather["windKmh"],
+            "source": "Open-Meteo",
+            "sourceMode": "official",
+            "observedAt": live_weather["observedAt"],
+        }
+        self._cache[cache_key] = {"ts": now_ts, "payload": copy.deepcopy(payload)}
+        return payload
+
+    def _fetch_weather(self, lat, lon):
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "timezone": "auto",
+            "forecast_days": 1,
+            "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation",
+            "daily": "precipitation_sum",
+            "temperature_unit": "celsius",
+            "wind_speed_unit": "kmh",
+            "precipitation_unit": "mm",
+        }
+        url = f"{self.FORECAST_URL}?{urllib_parse.urlencode(params)}"
+        payload = self._download_json(url)
+        if not payload:
+            return None
+
+        current = payload.get("current") or {}
+        daily = payload.get("daily") or {}
+        daily_precip = daily.get("precipitation_sum") or []
+        temp_c = self._safe_float(current.get("temperature_2m"))
+        humidity = self._safe_float(current.get("relative_humidity_2m"))
+        wind_kmh = self._safe_float(current.get("wind_speed_10m"))
+        rain_mm = self._safe_float(daily_precip[0] if daily_precip else current.get("precipitation"))
+        if temp_c is None or humidity is None or wind_kmh is None or rain_mm is None:
+            return None
+        return {
+            "tempC": round(temp_c, 1),
+            "rainMm": round(rain_mm, 1),
+            "humidity": int(round(humidity)),
+            "windKmh": round(wind_kmh, 1),
+            "observedAt": str(current.get("time") or now_label()).replace("T", " "),
+        }
+
+    def _download_json(self, url):
+        fetchers = (
+            lambda: self._download_with_urllib(url),
+            lambda: self._download_with_curl(url),
+            lambda: self._download_with_powershell(url),
+        )
+        for fetcher in fetchers:
+            payload = fetcher()
+            if isinstance(payload, dict) and not payload.get("error"):
+                return payload
+        return None
+
+    def _download_with_urllib(self, url):
+        request = urllib_request.Request(
+            url,
+            headers={"User-Agent": "CampoSat/1.0"},
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=self.REQUEST_TIMEOUT) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (urllib_error.HTTPError, urllib_error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+            return None
+
+    def _download_with_curl(self, url):
+        command = [
+            "curl.exe",
+            "-L",
+            "--silent",
+            "--show-error",
+            "--max-time",
+            str(self.COMMAND_TIMEOUT),
+            url,
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=self.COMMAND_TIMEOUT + 2,
+                check=False,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads((result.stdout or "").lstrip("\ufeff"))
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    def _download_with_powershell(self, url):
+        command = [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                "$ProgressPreference='SilentlyContinue'; "
+                f"(Invoke-WebRequest -UseBasicParsing '{url}' -TimeoutSec {self.COMMAND_TIMEOUT}).Content"
+            ),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=self.COMMAND_TIMEOUT + 3,
+                check=False,
+            )
+        except Exception:
+            return None
+        if result.returncode != 0:
+            return None
+        try:
+            return json.loads((result.stdout or "").lstrip("\ufeff"))
+        except (json.JSONDecodeError, ValueError):
+            return None
+
+    def _safe_float(self, value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
 
 class ConabMarketProvider:
@@ -1605,7 +1774,8 @@ function evaluatePixel(sample) {
 
 class ProviderRegistry:
     def __init__(self):
-        self.weather = MockWeatherProvider()
+        self.weather_fallback = MockWeatherProvider()
+        self.weather = OpenMeteoWeatherProvider(self.weather_fallback)
         self.market = ConabMarketProvider()
         self.whatsapp = MockWhatsAppProvider()
         self.satellite = MockSatelliteProvider(self.weather)

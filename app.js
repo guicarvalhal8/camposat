@@ -2299,6 +2299,7 @@ function renderDetailView(plot) {
             ${renderExplainMetric("Umidade do ar", `${scene.weather.humidity}%`, describeHumidity(scene.weather.humidity))}
             ${renderExplainMetric("Vento", `${scene.weather.windKmh} km/h`, describeWind(scene.weather.windKmh))}
           </div>
+          ${renderWeatherSource(scene)}
         </section>
 
         <section class="panel">
@@ -5220,6 +5221,17 @@ function renderExplainMetric(label, value, description) {
       <span class="metric-label">${label}</span>
       <span class="metric-value">${value}</span>
       <p class="metric-help">${description}</p>
+    </div>
+  `;
+}
+
+function renderWeatherSource(scene) {
+  if (!scene?.weather?.source) return "";
+  const observedAt = scene.weather.observedAt ? `Ultima leitura: ${formatDateTime(scene.weather.observedAt)}` : "";
+  return `
+    <div class="market-context-note" style="margin-top: 18px;">
+      <strong>Origem do clima: ${scene.weather.source}</strong>
+      <p>${scene.weather.sourceMode === "official" ? "Esses dados vieram de uma fonte externa por coordenada." : "Esses dados vieram do fallback local do app para nao deixar a tela vazia."}${observedAt ? ` ${observedAt}.` : ""}</p>
     </div>
   `;
 }
