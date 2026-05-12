@@ -207,6 +207,10 @@ optgroup {
   gap: 26px;
   position: sticky;
   top: 24px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .brand {
@@ -2003,6 +2007,41 @@ optgroup {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.climate-picker-field {
+  min-width: 320px;
+}
+
+.climate-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.climate-risk-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.climate-risk-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+}
+
+.alert-swatch.swatch-low {
+  background: linear-gradient(180deg, rgba(103, 241, 201, 0.92), rgba(60, 214, 136, 0.72));
+}
+
+.alert-swatch.swatch-medium {
+  background: linear-gradient(180deg, rgba(255, 181, 92, 0.92), rgba(245, 195, 90, 0.72));
+}
+
+.alert-swatch.swatch-high {
+  background: linear-gradient(180deg, rgba(255, 107, 107, 0.92), rgba(255, 122, 122, 0.72));
+}
+
 .market-split-layout {
   display: grid;
   gap: 18px;
@@ -2313,6 +2352,10 @@ optgroup {
   .market-source-panel {
     grid-template-columns: 1fr;
   }
+
+  .climate-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 960px) {
@@ -2339,6 +2382,9 @@ optgroup {
 
   .sidebar {
     padding: 20px;
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 
   .sidebar-nav {
@@ -2350,6 +2396,7 @@ optgroup {
   .field-grid,
   .metric-row,
   .metric-stack,
+  .climate-summary-grid,
   .scene-image-grid,
   .status-board,
   .demo-flow,
@@ -2393,6 +2440,10 @@ optgroup {
 
   .sidebar-nav {
     gap: 14px;
+  }
+
+  .climate-picker-field {
+    min-width: 100%;
   }
 
   .map-canvas {

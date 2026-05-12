@@ -75,10 +75,11 @@ let memoryOfflineState = null;
 let detailMap = null;
 let formMap = null;
 let formMarkers = [];
+let lastRouteKey = "";
 
 const app = document.getElementById("app");
 
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", handleRouteNavigation);
 document.addEventListener("click", (event) => {
   void handleClick(event);
 });
@@ -94,6 +95,17 @@ if (!window.location.hash) {
 
 hydrateAuthState();
 void loadBootstrap();
+
+function handleRouteNavigation() {
+  scrollToPageTop();
+  render();
+}
+
+function scrollToPageTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+}
 
 async function loadBootstrap() {
   state.loading = true;
@@ -730,6 +742,11 @@ function normalizeEmail(value) {
 function render() {
   teardownMaps();
   const route = getRoute();
+  const routeKey = `${route.view}:${route.plotId || ""}`;
+  if (routeKey !== lastRouteKey) {
+    scrollToPageTop();
+    lastRouteKey = routeKey;
+  }
   prepareFormStateForRoute(route);
   const portfolioPlots = getPortfolioPlots();
   const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
@@ -1270,6 +1287,9 @@ function getRoute() {
   if (!parts.length || parts[0] === "talhoes") {
     return { view: "plots" };
   }
+  if (parts[0] === "clima") {
+    return { view: "climate", plotId: parts[1] || null };
+  }
   if (parts[0] === "mercado") {
     return { view: "market" };
   }
@@ -1464,6 +1484,13 @@ function renderSidebar(route) {
           icon: iconGrid()
         },
         {
+          href: getPortfolioPlots().length ? `#/clima/${(getMostCriticalPlot(getPortfolioPlots()) || getPortfolioPlots()[0]).id}` : "#/clima",
+          key: "climate",
+          title: "Clima",
+          text: "Veja previsao, chuva e risco com mais detalhe",
+          icon: iconCloud()
+        },
+        {
           href: "#/mercado",
           key: "market",
           title: "Mercado",
@@ -1622,6 +1649,17 @@ function renderTopbar(route, activePlot) {
     primaryKpiValue = String(state.marketPage.data?.items?.filter((item) => item.available).length || 0);
     secondaryKpiLabel = "Cobertura";
     secondaryKpiValue = state.marketPage.data?.coverageLabel || "Goias";
+  } else if (route.view === "climate") {
+    const scene = activePlot ? getActiveScene(activePlot) : null;
+    current = {
+      title: "Clima",
+      text: "Abra uma leitura mais detalhada do tempo, da chuva recente e da previsao para decidir melhor o que fazer em campo."
+    };
+    modeLabel = "Clima";
+    primaryKpiLabel = "Area em foco";
+    primaryKpiValue = activePlot ? activePlot.name : "Sem area";
+    secondaryKpiLabel = "Risco de operacao";
+    secondaryKpiValue = scene?.weather?.fieldRisk?.label || "--";
   } else if (route.view === "detail" && activePlot) {
     const scene = getActiveScene(activePlot);
     current = {
@@ -1685,10 +1723,134 @@ function renderTopbar(route, activePlot) {
 function renderView(route, activePlot) {
   if (route.view === "form") return renderFormView();
   if (route.view === "market") return renderMarketView();
+  if (route.view === "climate") return renderClimateView(activePlot);
   if (route.view === "farms") return renderFarmsView();
   if (route.view === "detail" && activePlot) return renderDetailView(activePlot);
   if (route.view === "alerts") return renderAlertsView();
   return renderDashboardView();
+}
+
+function renderClimateView(activePlot) {
+  const portfolioPlots = getPortfolioPlots()
+    .slice()
+    .sort((left, right) => `${left.farmName} ${left.name}`.localeCompare(`${right.farmName} ${right.name}`, "pt-BR"));
+  const plot = activePlot || portfolioPlots[0] || null;
+  if (!plot) {
+    return `
+      <div class="workspace-grid">
+        <section class="panel">${renderEmptyState("Sem area para analisar", "Cadastre ou escolha uma area para abrir a leitura detalhada de clima.")}</section>
+      </div>
+    `;
+  }
+
+  const scene = getActiveScene(plot);
+  const riskItems = portfolioPlots
+    .map((item) => {
+      const weather = getActiveScene(item).weather || {};
+      return {
+        id: item.id,
+        name: item.name,
+        farmName: item.farmName,
+        risk: weather.fieldRisk || { label: "Sem leitura", level: "low", note: "Ainda nao existe leitura recente." }
+      };
+    })
+    .sort((left, right) => rankRisk(right.risk.level) - rankRisk(left.risk.level));
+
+  const averageRecentRain = portfolioPlots.length
+    ? portfolioPlots.reduce((sum, item) => sum + Number(getActiveScene(item).weather?.recentRainMm || 0), 0) / portfolioPlots.length
+    : 0;
+  const highRiskCount = riskItems.filter((item) => item.risk.level === "high").length;
+  const mediumRiskCount = riskItems.filter((item) => item.risk.level === "medium").length;
+
+  return `
+    <div class="workspace-grid">
+      <section class="panel">
+        <div class="list-head">
+          <div>
+            <span class="eyebrow">Clima</span>
+            <h3>Leitura detalhada do tempo</h3>
+            <p>Escolha uma area para ver previsao, chuva recente e um resumo simples do que pode atrapalhar a operacao em campo.</p>
+          </div>
+          <label class="toolbar-field climate-picker-field">
+            <span>Area para analisar</span>
+            <select name="climatePlotId">
+              ${portfolioPlots
+                .map(
+                  (item) => `
+                    <option value="${item.id}" ${item.id === plot.id ? "selected" : ""}>
+                      ${item.farmName} - ${item.name}
+                    </option>
+                  `
+                )
+                .join("")}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="climate-summary-grid">
+          <div class="metric-box">
+            <span class="metric-label">Area em foco</span>
+            <span class="metric-value">${plot.name}</span>
+            <p class="metric-help">${plot.farmName} • ${plot.municipality}</p>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Chuva recente media</span>
+            <span class="metric-value">${averageRecentRain.toFixed(1)} mm</span>
+            <p class="metric-help">Media das areas da sua carteira nos ultimos dias.</p>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Areas com mais cuidado</span>
+            <span class="metric-value">${highRiskCount}</span>
+            <p class="metric-help">${highRiskCount ? "Ha areas pedindo mais cautela para entrar ou operar." : "Nenhuma area esta em risco alto agora."}</p>
+          </div>
+          <div class="metric-box">
+            <span class="metric-label">Areas em atencao</span>
+            <span class="metric-value">${mediumRiskCount}</span>
+            <p class="metric-help">Quantidade de areas que merecem olhar mais de perto.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <span class="eyebrow">Area selecionada</span>
+        <h3>${plot.farmName} • ${plot.name}</h3>
+        <div class="weather-grid" style="margin-top: 18px;">
+          ${renderExplainMetric("Temperatura agora", `${scene.weather.tempC}C`, describeTemperature(scene.weather.tempC))}
+          ${renderExplainMetric("Chuva mais recente", `${scene.weather.rainMm} mm`, describeRain(scene.weather.rainMm))}
+          ${renderExplainMetric("Chuva acumulada recente", `${scene.weather.recentRainMm ?? 0} mm`, "Mostra o quanto choveu nos ultimos dias para ajudar a decidir entrada em campo e risco de encharcamento.")}
+          ${renderExplainMetric("Umidade do ar", `${scene.weather.humidity}%`, describeHumidity(scene.weather.humidity))}
+          ${renderExplainMetric("Vento", `${scene.weather.windKmh} km/h`, describeWind(scene.weather.windKmh))}
+          ${renderExplainMetric("Saude da lavoura", scene.ndvi.toFixed(2), "Esse valor entra na leitura do risco para ligar tempo e resposta da lavoura.")}
+        </div>
+        ${renderWeatherForecast(scene)}
+        ${renderFieldRisk(scene)}
+        ${renderWeatherSource(scene)}
+      </section>
+
+      <section class="panel">
+        <span class="eyebrow">Como esta a carteira</span>
+        <h3>Risco por area</h3>
+        <div class="climate-risk-list" style="margin-top: 18px;">
+          ${riskItems
+            .map(
+              (item) => `
+                <a class="history-item climate-risk-item" href="#/clima/${item.id}">
+                  <span class="alert-swatch ${riskSwatchClass(item.risk.level)}"></span>
+                  <div class="history-copy">
+                    <strong>${item.farmName} • ${item.name}</strong>
+                    <p>${item.risk.note}</p>
+                  </div>
+                  <div class="history-meta">${item.risk.label}</div>
+                </a>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderMarketView() {
@@ -3864,6 +4026,10 @@ async function handleChange(event) {
     }
     return;
   }
+  if (name === "climatePlotId") {
+    window.location.hash = value ? `#/clima/${value}` : "#/clima";
+    return;
+  }
   if (event.target.closest("#plot-form")) {
     ensureFormDraft(getCurrentUser(), getActiveAgronomist());
     if (name === "geometryFile") {
@@ -5363,6 +5529,18 @@ function formatDateTime(value) {
   return `${day}/${month}/${year}${timePart ? ` ${timePart}` : ""}`;
 }
 
+function rankRisk(level) {
+  if (level === "high") return 3;
+  if (level === "medium") return 2;
+  return 1;
+}
+
+function riskSwatchClass(level) {
+  if (level === "high") return "swatch-high";
+  if (level === "medium") return "swatch-medium";
+  return "swatch-low";
+}
+
 function formatShortDate(value) {
   const [datePart = ""] = String(value || "").split(" ");
   if (!datePart) return "--";
@@ -5452,6 +5630,14 @@ function iconBell() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M6 9C6 5.686 8.686 3 12 3C15.314 3 18 5.686 18 9V13L20 16V17H4V16L6 13V9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"></path>
       <path d="M10 20C10.5 20.667 11.167 21 12 21C12.833 21 13.5 20.667 14 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"></path>
+    </svg>
+  `;
+}
+
+function iconCloud() {
+  return `
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M7.8 18h8.6a4.1 4.1 0 0 0 .4-8.2 5.7 5.7 0 0 0-10.9 1.6A3.5 3.5 0 0 0 7.8 18Z" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path>
     </svg>
   `;
 }
