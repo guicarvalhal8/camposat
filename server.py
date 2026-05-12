@@ -718,18 +718,21 @@ class MockWeatherProvider:
             return {
                 "level": "high",
                 "label": "Entrada em campo delicada",
-                "note": "O solo pode estar pesado ou voltar a molhar rapido, entao vale evitar entrada agora."
+                "note": "O solo pode estar pesado ou voltar a molhar rapido, entao vale evitar entrada agora.",
+                "action": "Evite entrar agora e revise de novo mais tarde."
             }
         if recent_rain >= 12 or humidity >= 85 or rain_next >= 8:
             return {
                 "level": "medium",
                 "label": "Entrada em campo com cuidado",
-                "note": "Da para entrar, mas vale checar lama, umidade do solo e a chuva prevista."
+                "note": "Da para entrar, mas vale checar lama, umidade do solo e a chuva prevista.",
+                "action": "Bom ir com cuidado e checar as condicoes no local."
             }
         return {
             "level": "low",
             "label": "Entrada em campo tranquila",
-            "note": "Nao ha sinal forte de solo encharcado ou chuva imediata atrapalhando a vistoria."
+            "note": "Nao ha sinal forte de solo encharcado ou chuva imediata atrapalhando a vistoria.",
+            "action": "Bom momento para vistoria."
         }
 
     def _build_application_risk(self, humidity, wind, forecast):
@@ -739,18 +742,21 @@ class MockWeatherProvider:
             return {
                 "level": "high",
                 "label": "Aplicacao pouco segura",
-                "note": "Vento ou chuva prevista podem derrubar a qualidade da aplicacao e aumentar perda."
+                "note": "Vento ou chuva prevista podem derrubar a qualidade da aplicacao e aumentar perda.",
+                "action": "Evite aplicar agora."
             }
         if max_wind >= 14 or humidity >= 85 or rain_next >= 5:
             return {
                 "level": "medium",
                 "label": "Aplicacao pedindo cuidado",
-                "note": "Vale revisar janela, deriva e chance de chuva antes de aplicar."
+                "note": "Vale revisar janela, deriva e chance de chuva antes de aplicar.",
+                "action": "So aplique se a janela estiver bem revisada."
             }
         return {
             "level": "low",
             "label": "Aplicacao em boa janela",
-            "note": "Vento e chuva nao mostram trava importante para aplicacao nesta rodada."
+            "note": "Vento e chuva nao mostram trava importante para aplicacao nesta rodada.",
+            "action": "Janela boa para aplicar."
         }
 
     def _build_crop_risk(self, ndvi, recent_rain, forecast):
@@ -760,18 +766,21 @@ class MockWeatherProvider:
             return {
                 "level": "high",
                 "label": "Lavoura sob mais pressao",
-                "note": "A lavoura merece acompanhamento mais de perto por sinal de estresse ou clima apertado."
+                "note": "A lavoura merece acompanhamento mais de perto por sinal de estresse ou clima apertado.",
+                "action": "Acompanhe a resposta da lavoura nas proximas 48h."
             }
         if ndvi < 0.68 or hot_days >= 2 or recent_rain >= 25:
             return {
                 "level": "medium",
                 "label": "Lavoura pedindo acompanhamento",
-                "note": "Ainda nao parece critico, mas o clima pode apertar e vale observar a resposta da area."
+                "note": "Ainda nao parece critico, mas o clima pode apertar e vale observar a resposta da area.",
+                "action": "Vale acompanhar a resposta da lavoura nos proximos dias."
             }
         return {
             "level": "low",
             "label": "Lavoura em situacao estavel",
-            "note": "Nao ha sinal forte de clima pressionando a lavoura neste momento."
+            "note": "Nao ha sinal forte de clima pressionando a lavoura neste momento.",
+            "action": "Siga no acompanhamento normal."
         }
 
     def _compose_overall_risk(self, details):
@@ -780,18 +789,21 @@ class MockWeatherProvider:
             return {
                 "level": "high",
                 "label": "Risco alto",
-                "note": "Pelo menos uma frente esta apertada agora. Vale olhar entrada, aplicacao e resposta da lavoura antes de agir."
+                "note": "Pelo menos uma frente esta apertada agora. Vale olhar entrada, aplicacao e resposta da lavoura antes de agir.",
+                "action": "Segure a operacao e revise as tres frentes antes de decidir."
             }
         if highest.get("level") == "medium":
             return {
                 "level": "medium",
                 "label": "Risco moderado",
-                "note": "Ha pontos pedindo cuidado, mas ainda existe janela para operar com revisao antes."
+                "note": "Ha pontos pedindo cuidado, mas ainda existe janela para operar com revisao antes.",
+                "action": "Da para seguir, mas com revisao rapida antes de agir."
             }
         return {
             "level": "low",
             "label": "Risco baixo",
-            "note": "O clima desta rodada nao indica trava importante para a operacao de campo."
+            "note": "O clima desta rodada nao indica trava importante para a operacao de campo.",
+            "action": "Cenario favoravel para seguir o plano."
         }
 
     def _risk_rank(self, level):

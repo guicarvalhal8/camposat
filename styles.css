@@ -2207,6 +2207,19 @@ optgroup {
   line-height: 1.45;
 }
 
+.weather-risk-action {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(5, 15, 21, 0.44);
+  color: var(--text);
+  font-size: 0.84rem;
+  line-height: 1.3;
+}
+
 .weather-risk-card.weather-risk-low {
   border-color: rgba(103, 241, 201, 0.22);
   background: rgba(103, 241, 201, 0.08);

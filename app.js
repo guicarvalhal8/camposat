@@ -5446,6 +5446,7 @@ function renderOperationalRiskGrid(scene) {
               <span class="metric-label">${item.title}</span>
               <strong>${item.risk.label || "--"}</strong>
               <p>${item.risk.note || "Sem observacao adicional."}</p>
+              <span class="weather-risk-action">${item.risk.action || buildWeatherActionCopy(item.title, item.risk.level)}</span>
             </div>
           `
         )
@@ -5461,8 +5462,30 @@ function renderFieldRisk(scene) {
     <div class="market-context-note weather-risk-note weather-risk-${risk.level || "low"}" style="margin-top: 18px;">
       <strong>${risk.label || "Risco operacional"}</strong>
       <p>${risk.note || "Sem observacao adicional para esta rodada."}</p>
+      <span class="weather-risk-action">${risk.action || buildWeatherActionCopy("Resumo geral", risk.level)}</span>
     </div>
   `;
+}
+
+function buildWeatherActionCopy(title, level) {
+  if (title === "Entrada em campo") {
+    if (level === "high") return "Evite entrar agora e revise de novo mais tarde.";
+    if (level === "medium") return "Bom ir com cuidado e checar as condicoes no local.";
+    return "Bom momento para vistoria.";
+  }
+  if (title === "Aplicacao") {
+    if (level === "high") return "Evite aplicar agora.";
+    if (level === "medium") return "So aplique se a janela estiver bem revisada.";
+    return "Janela boa para aplicar.";
+  }
+  if (title === "Lavoura") {
+    if (level === "high") return "Acompanhe a resposta da lavoura nas proximas 48h.";
+    if (level === "medium") return "Vale acompanhar a resposta da lavoura nos proximos dias.";
+    return "Siga no acompanhamento normal.";
+  }
+  if (level === "high") return "Segure a operacao e revise as tres frentes antes de decidir.";
+  if (level === "medium") return "Da para seguir, mas com revisao rapida antes de agir.";
+  return "Cenario favoravel para seguir o plano.";
 }
 
 function describeHealthIndex(value) {
