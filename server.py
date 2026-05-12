@@ -658,6 +658,7 @@ class MockWeatherProvider:
 
 class ConabMarketProvider:
     WEEKLY_UF_URL = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalUF.txt"
+    MONTHLY_UF_URL = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosMensalUF.txt"
     COVERAGE_UF = "GO"
     REQUEST_TIMEOUT = 18
     COMMAND_TIMEOUT = 20
@@ -702,7 +703,13 @@ class ConabMarketProvider:
         return market
 
     def fetch_market_feed(self):
-        rows = self._fetch_rows()
+        rows = []
+        source_profile = None
+        for candidate in self._source_profiles():
+            rows = self._fetch_rows(candidate)
+            if rows:
+                source_profile = candidate
+                break
         if not rows:
             cached_feed = self._load_cached_feed()
             if cached_feed:
@@ -732,12 +739,13 @@ class ConabMarketProvider:
         }
         feed = {
             "title": "Mercado em Goias",
-            "description": "Aqui ficam os principais precos organizados para leitura rapida. Hoje a cobertura esta focada em Goias e pronta para crescer depois.",
+            "description": source_profile["description"],
             "coverageLabel": "Goias",
-            "coverageNote": "Nesta primeira fase, a aba acompanha referencias da Conab para Goias.",
-            "sourceLabel": "Conab - Precos agropecuarios semanal por UF",
-            "sourceNote": "Usamos o arquivo semanal oficial da Conab por UF e filtramos os itens mais relevantes para a rotina do app em Goias.",
+            "coverageNote": source_profile["coverageNote"],
+            "sourceLabel": source_profile["sourceLabel"],
+            "sourceNote": source_profile["sourceNote"],
             "sourceMode": "official",
+            "sourceKind": source_profile["kind"],
             "periodLabel": latest_period["label"] if latest_period else "",
             "updatedAt": updated_at,
             "items": items,
@@ -747,8 +755,28 @@ class ConabMarketProvider:
         self._save_cached_feed(feed)
         return feed
 
-    def _fetch_rows(self):
-        content = self._download_weekly_content()
+    def _source_profiles(self):
+        return [
+            {
+                "kind": "weekly",
+                "url": self.WEEKLY_UF_URL,
+                "description": "Aqui ficam os principais precos organizados para leitura rapida. Hoje a cobertura esta focada em Goias e pronta para crescer depois.",
+                "coverageNote": "Nesta primeira fase, a aba acompanha referencias semanais da Conab para Goias.",
+                "sourceLabel": "Conab - Precos agropecuarios semanal por UF",
+                "sourceNote": "Usamos o arquivo semanal oficial da Conab por UF e filtramos os itens mais relevantes para a rotina do app em Goias.",
+            },
+            {
+                "kind": "monthly",
+                "url": self.MONTHLY_UF_URL,
+                "description": "Nesta rodada usamos a base oficial mensal da Conab para manter a aba oficial mesmo quando o arquivo semanal nao responde.",
+                "coverageNote": "Nesta primeira fase, a aba acompanha referencias oficiais da Conab para Goias. Quando o semanal falha, usamos o mensal.",
+                "sourceLabel": "Conab - Precos agropecuarios mensal por UF",
+                "sourceNote": "O arquivo semanal nao respondeu nesta tentativa. Usamos a base mensal oficial da Conab por UF para manter a aba com referencia oficial.",
+            },
+        ]
+
+    def _fetch_rows(self, source_profile):
+        content = self._download_content(source_profile["url"])
         if not content:
             return []
 
@@ -761,14 +789,15 @@ class ConabMarketProvider:
             row["_product_key"] = self._normalize_key(row.get("produto"))
             row["_classification_key"] = self._normalize_key(row.get("classificao_produto"))
             row["_level_key"] = self._normalize_key(row.get("dsc_nivel_comercializacao"))
+            row["_source_kind"] = source_profile["kind"]
             rows.append(row)
         return rows
 
-    def _download_weekly_content(self):
+    def _download_content(self, url):
         fetchers = (
-            self._download_with_urllib,
-            self._download_with_curl,
-            self._download_with_powershell,
+            lambda: self._download_with_urllib(url),
+            lambda: self._download_with_curl(url),
+            lambda: self._download_with_powershell(url),
         )
         for fetcher in fetchers:
             content = fetcher()
@@ -776,9 +805,9 @@ class ConabMarketProvider:
                 return content
         return ""
 
-    def _download_with_urllib(self):
+    def _download_with_urllib(self, url):
         request = urllib_request.Request(
-            self.WEEKLY_UF_URL,
+            url,
             headers={"User-Agent": "CampoSat/1.0"},
             method="GET",
         )
@@ -788,7 +817,7 @@ class ConabMarketProvider:
         except Exception:
             return ""
 
-    def _download_with_curl(self):
+    def _download_with_curl(self, url):
         command = [
             "curl.exe",
             "-L",
@@ -796,7 +825,7 @@ class ConabMarketProvider:
             "--show-error",
             "--max-time",
             str(self.COMMAND_TIMEOUT),
-            self.WEEKLY_UF_URL,
+            url,
         ]
         try:
             result = subprocess.run(
@@ -813,14 +842,14 @@ class ConabMarketProvider:
             return ""
         return (result.stdout or "").lstrip("\ufeff")
 
-    def _download_with_powershell(self):
+    def _download_with_powershell(self, url):
         command = [
             "powershell",
             "-NoProfile",
             "-Command",
             (
                 "$ProgressPreference='SilentlyContinue'; "
-                f"(Invoke-WebRequest -UseBasicParsing '{self.WEEKLY_UF_URL}' -TimeoutSec {self.COMMAND_TIMEOUT}).Content"
+                f"(Invoke-WebRequest -UseBasicParsing '{url}' -TimeoutSec {self.COMMAND_TIMEOUT}).Content"
             ),
         ]
         try:
@@ -983,9 +1012,15 @@ class ConabMarketProvider:
         )
 
     def _period_label(self, row):
+        if row.get("_source_kind") == "monthly":
+            month = int(row.get("mes") or 0)
+            year = int(row.get("ano") or 0)
+            return f"{month:02d}/{year}" if month and year else "Mes nao informado"
         return row.get("data_inicial_final_semana") or "Periodo nao informado"
 
     def _short_period_label(self, row):
+        if row.get("_source_kind") == "monthly":
+            return self._period_label(row)
         raw = self._period_label(row)
         start = raw.split(" - ")[0].strip()
         pieces = start.split("-")
