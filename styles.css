@@ -2181,6 +2181,47 @@ optgroup {
   font-size: 0.86rem;
 }
 
+.weather-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.weather-risk-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.weather-risk-card strong {
+  font-size: 1rem;
+}
+
+.weather-risk-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.weather-risk-card.weather-risk-low {
+  border-color: rgba(103, 241, 201, 0.22);
+  background: rgba(103, 241, 201, 0.08);
+}
+
+.weather-risk-card.weather-risk-medium {
+  border-color: rgba(255, 181, 92, 0.24);
+  background: rgba(255, 181, 92, 0.1);
+}
+
+.weather-risk-card.weather-risk-high {
+  border-color: rgba(255, 107, 107, 0.24);
+  background: rgba(255, 107, 107, 0.1);
+}
+
 .weather-risk-note.weather-risk-low {
   border-color: rgba(103, 241, 201, 0.22);
   background: rgba(103, 241, 201, 0.08);
@@ -2362,6 +2403,10 @@ optgroup {
 
   .climate-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weather-risk-grid {
+    grid-template-columns: 1fr;
   }
 }
 

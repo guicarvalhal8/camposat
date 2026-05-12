@@ -1825,6 +1825,7 @@ function renderClimateView(activePlot) {
           ${renderExplainMetric("Saude da lavoura", scene.ndvi.toFixed(2), "Esse valor entra na leitura do risco para ligar tempo e resposta da lavoura.")}
         </div>
         ${renderWeatherForecast(scene)}
+        ${renderOperationalRiskGrid(scene)}
         ${renderFieldRisk(scene)}
         ${renderWeatherSource(scene)}
       </section>
@@ -2463,6 +2464,7 @@ function renderDetailView(plot) {
             ${renderExplainMetric("Vento", `${scene.weather.windKmh} km/h`, describeWind(scene.weather.windKmh))}
           </div>
           ${renderWeatherForecast(scene)}
+          ${renderOperationalRiskGrid(scene)}
           ${renderFieldRisk(scene)}
           ${renderWeatherSource(scene)}
         </section>
@@ -5418,6 +5420,32 @@ function renderWeatherForecast(scene) {
               <span>${day.tempMinC}C a ${day.tempMaxC}C</span>
               <span>Chuva ${day.rainMm} mm</span>
               <span>Vento ${day.windKmh} km/h</span>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderOperationalRiskGrid(scene) {
+  const risks = scene?.weather?.operationalRisks;
+  if (!risks) return "";
+  const cards = [
+    { title: "Entrada em campo", risk: risks.fieldVisit },
+    { title: "Aplicacao", risk: risks.application },
+    { title: "Lavoura", risk: risks.crop }
+  ].filter((item) => item.risk);
+  if (!cards.length) return "";
+  return `
+    <div class="weather-risk-grid">
+      ${cards
+        .map(
+          (item) => `
+            <div class="weather-risk-card weather-risk-${item.risk.level || "low"}">
+              <span class="metric-label">${item.title}</span>
+              <strong>${item.risk.label || "--"}</strong>
+              <p>${item.risk.note || "Sem observacao adicional."}</p>
             </div>
           `
         )

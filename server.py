@@ -660,7 +660,7 @@ class MockWeatherProvider:
             {"label": "Dia 2", "date": "", "tempMaxC": round(base_temp + 2.0, 1), "tempMinC": round(base_temp - 4.8, 1), "rainMm": round(max(0, rain + 1), 1), "windKmh": round(wind + 2.4, 1)},
             {"label": "Dia 3", "date": "", "tempMaxC": round(base_temp + 0.8, 1), "tempMinC": round(base_temp - 5.9, 1), "rainMm": round(max(0, rain - 1), 1), "windKmh": round(wind + 0.8, 1)},
         ]
-        field_risk = self._build_field_risk(ndvi, recent_rain, humidity, wind, forecast)
+        risk_bundle = self._build_operational_risks(ndvi, recent_rain, humidity, wind, forecast)
         return {
             "tempC": round(base_temp + (0.6 - ndvi) * 10, 1),
             "rainMm": rain,
@@ -668,7 +668,8 @@ class MockWeatherProvider:
             "windKmh": wind,
             "recentRainMm": recent_rain,
             "forecast": forecast,
-            "fieldRisk": field_risk,
+            "fieldRisk": risk_bundle["overall"],
+            "operationalRisks": risk_bundle["details"],
             "source": "Simulacao local do CampoSat",
             "sourceMode": "fallback",
             "observedAt": captured_at or now_label(),
@@ -702,6 +703,104 @@ class MockWeatherProvider:
             return {"level": "medium", "label": "Risco moderado", "note": f"Da para operar com cuidado porque {', '.join(reasons)}."}
         return {"level": "low", "label": "Risco baixo", "note": "O clima desta rodada nao indica trava importante para a operacao de campo."}
 
+    def _build_operational_risks(self, ndvi, recent_rain, humidity, wind, forecast):
+        details = {
+            "fieldVisit": self._build_field_visit_risk(recent_rain, humidity, forecast),
+            "application": self._build_application_risk(humidity, wind, forecast),
+            "crop": self._build_crop_risk(ndvi, recent_rain, forecast),
+        }
+        overall = self._compose_overall_risk(details)
+        return {"overall": overall, "details": details}
+
+    def _build_field_visit_risk(self, recent_rain, humidity, forecast):
+        rain_next = sum((day.get("rainMm") or 0) for day in forecast[:2])
+        if recent_rain >= 25 or rain_next >= 20:
+            return {
+                "level": "high",
+                "label": "Entrada em campo delicada",
+                "note": "O solo pode estar pesado ou voltar a molhar rapido, entao vale evitar entrada agora."
+            }
+        if recent_rain >= 12 or humidity >= 85 or rain_next >= 8:
+            return {
+                "level": "medium",
+                "label": "Entrada em campo com cuidado",
+                "note": "Da para entrar, mas vale checar lama, umidade do solo e a chuva prevista."
+            }
+        return {
+            "level": "low",
+            "label": "Entrada em campo tranquila",
+            "note": "Nao ha sinal forte de solo encharcado ou chuva imediata atrapalhando a vistoria."
+        }
+
+    def _build_application_risk(self, humidity, wind, forecast):
+        rain_next = sum((day.get("rainMm") or 0) for day in forecast[:2])
+        max_wind = max([wind] + [(day.get("windKmh") or 0) for day in forecast[:2]])
+        if max_wind >= 20 or rain_next >= 12:
+            return {
+                "level": "high",
+                "label": "Aplicacao pouco segura",
+                "note": "Vento ou chuva prevista podem derrubar a qualidade da aplicacao e aumentar perda."
+            }
+        if max_wind >= 14 or humidity >= 85 or rain_next >= 5:
+            return {
+                "level": "medium",
+                "label": "Aplicacao pedindo cuidado",
+                "note": "Vale revisar janela, deriva e chance de chuva antes de aplicar."
+            }
+        return {
+            "level": "low",
+            "label": "Aplicacao em boa janela",
+            "note": "Vento e chuva nao mostram trava importante para aplicacao nesta rodada."
+        }
+
+    def _build_crop_risk(self, ndvi, recent_rain, forecast):
+        hot_days = sum(1 for day in forecast if (day.get("tempMaxC") or 0) >= 31)
+        rainy_days = sum(1 for day in forecast if (day.get("rainMm") or 0) >= 10)
+        if ndvi < 0.55 or (recent_rain <= 5 and hot_days >= 2) or rainy_days >= 3:
+            return {
+                "level": "high",
+                "label": "Lavoura sob mais pressao",
+                "note": "A lavoura merece acompanhamento mais de perto por sinal de estresse ou clima apertado."
+            }
+        if ndvi < 0.68 or hot_days >= 2 or recent_rain >= 25:
+            return {
+                "level": "medium",
+                "label": "Lavoura pedindo acompanhamento",
+                "note": "Ainda nao parece critico, mas o clima pode apertar e vale observar a resposta da area."
+            }
+        return {
+            "level": "low",
+            "label": "Lavoura em situacao estavel",
+            "note": "Nao ha sinal forte de clima pressionando a lavoura neste momento."
+        }
+
+    def _compose_overall_risk(self, details):
+        highest = max(details.values(), key=lambda item: self._risk_rank(item.get("level")))
+        if highest.get("level") == "high":
+            return {
+                "level": "high",
+                "label": "Risco alto",
+                "note": "Pelo menos uma frente esta apertada agora. Vale olhar entrada, aplicacao e resposta da lavoura antes de agir."
+            }
+        if highest.get("level") == "medium":
+            return {
+                "level": "medium",
+                "label": "Risco moderado",
+                "note": "Ha pontos pedindo cuidado, mas ainda existe janela para operar com revisao antes."
+            }
+        return {
+            "level": "low",
+            "label": "Risco baixo",
+            "note": "O clima desta rodada nao indica trava importante para a operacao de campo."
+        }
+
+    def _risk_rank(self, level):
+        if level == "high":
+            return 3
+        if level == "medium":
+            return 2
+        return 1
+
 
 class OpenMeteoWeatherProvider:
     FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
@@ -730,6 +829,13 @@ class OpenMeteoWeatherProvider:
         if not live_weather:
             return self.fallback_provider.generate(plot, status, ndvi, captured_at)
 
+        risk_bundle = self.fallback_provider._build_operational_risks(
+            ndvi,
+            live_weather["recentRainMm"],
+            live_weather["humidity"],
+            live_weather["windKmh"],
+            live_weather["forecast"],
+        )
         payload = {
             "tempC": live_weather["tempC"],
             "rainMm": live_weather["rainMm"],
@@ -737,13 +843,8 @@ class OpenMeteoWeatherProvider:
             "windKmh": live_weather["windKmh"],
             "recentRainMm": live_weather["recentRainMm"],
             "forecast": live_weather["forecast"],
-            "fieldRisk": self.fallback_provider._build_field_risk(
-                ndvi,
-                live_weather["recentRainMm"],
-                live_weather["humidity"],
-                live_weather["windKmh"],
-                live_weather["forecast"],
-            ),
+            "fieldRisk": risk_bundle["overall"],
+            "operationalRisks": risk_bundle["details"],
             "source": "Open-Meteo",
             "sourceMode": "official",
             "observedAt": live_weather["observedAt"],
