@@ -666,27 +666,91 @@ class ConabMarketProvider:
     TRACKED_PRODUCTS = [
         {
             "slug": "soy",
+            "category": "sales",
             "productId": "4744",
             "product": "SOJA",
             "classification": "EM GRAOS",
             "label": "Soja saca 60kg",
             "multiplier": 60.0,
+            "unitLabel": "por saca de 60 kg",
+            "sourcePriority": ["weekly", "monthly"],
         },
         {
             "slug": "corn",
+            "category": "sales",
             "productId": "4742",
             "product": "MILHO",
             "classification": "EM GRAOS",
             "label": "Milho saca 60kg",
             "multiplier": 60.0,
+            "unitLabel": "por saca de 60 kg",
+            "sourcePriority": ["weekly", "monthly"],
         },
         {
             "slug": "sorghum",
+            "category": "sales",
             "productId": "4745",
             "product": "SORGO",
             "classification": "EM GRAOS",
             "label": "Sorgo saca 60kg",
             "multiplier": 60.0,
+            "unitLabel": "por saca de 60 kg",
+            "sourcePriority": ["weekly", "monthly"],
+        },
+        {
+            "slug": "soy-seed",
+            "category": "purchases",
+            "productId": "11764",
+            "product": "SEMENTE DE SOJA",
+            "classification": "INTACTA RR2 PRO",
+            "label": "Semente de soja",
+            "multiplier": 1.0,
+            "unitLabel": "por kg",
+            "sourcePriority": ["monthly", "weekly"],
+        },
+        {
+            "slug": "corn-seed",
+            "category": "purchases",
+            "productId": "13959",
+            "product": "SEMENTE DE MILHO",
+            "classification": "PRECOCE",
+            "label": "Semente de milho",
+            "multiplier": 1.0,
+            "unitLabel": "por kg",
+            "sourcePriority": ["monthly", "weekly"],
+        },
+        {
+            "slug": "urea",
+            "category": "purchases",
+            "productId": "4579",
+            "product": "UREIA",
+            "classification": "NAO INFORMADO",
+            "label": "Ureia",
+            "multiplier": 1.0,
+            "unitLabel": "por kg",
+            "sourcePriority": ["monthly", "weekly"],
+        },
+        {
+            "slug": "map-fertilizer",
+            "category": "purchases",
+            "productId": "11909",
+            "product": "MAP",
+            "classification": "11-52-0",
+            "label": "MAP",
+            "multiplier": 1.0,
+            "unitLabel": "por kg",
+            "sourcePriority": ["monthly", "weekly"],
+        },
+        {
+            "slug": "potassium-chloride",
+            "category": "purchases",
+            "productId": "4541",
+            "product": "CLORETO DE POTASSIO",
+            "classification": "NAO INFORMADO",
+            "label": "Cloreto de potassio",
+            "multiplier": 1.0,
+            "unitLabel": "por kg",
+            "sourcePriority": ["monthly", "weekly"],
         },
     ]
 
@@ -703,21 +767,19 @@ class ConabMarketProvider:
         return market
 
     def fetch_market_feed(self):
-        rows = []
-        source_profile = None
-        for candidate in self._source_profiles():
-            rows = self._fetch_rows(candidate)
-            if rows:
-                source_profile = candidate
-                break
-        if not rows:
+        profiles = self._source_profiles()
+        rows_by_kind = {}
+        for candidate in profiles:
+            rows_by_kind[candidate["kind"]] = self._fetch_rows(candidate)
+
+        if not any(rows_by_kind.values()):
             cached_feed = self._load_cached_feed()
             if cached_feed:
                 self._latest_feed = copy.deepcopy(cached_feed)
                 return cached_feed
             return None
 
-        items = [self._build_item(rows, config) for config in self.TRACKED_PRODUCTS]
+        items = [self._build_item(rows_by_kind, config) for config in self.TRACKED_PRODUCTS]
         available_items = [item for item in items if item.get("available")]
         if not available_items:
             cached_feed = self._load_cached_feed()
@@ -737,15 +799,18 @@ class ConabMarketProvider:
             "soy": self._build_overview_item(items, "soy"),
             "corn": self._build_overview_item(items, "corn"),
         }
+        live_kinds = {item.get("sourceKind") for item in available_items if item.get("sourceKind")}
+        uses_weekly = "weekly" in live_kinds
+        uses_monthly = "monthly" in live_kinds
         feed = {
             "title": "Mercado em Goias",
-            "description": source_profile["description"],
+            "description": self._build_feed_description(uses_weekly, uses_monthly),
             "coverageLabel": "Goias",
-            "coverageNote": source_profile["coverageNote"],
-            "sourceLabel": source_profile["sourceLabel"],
-            "sourceNote": source_profile["sourceNote"],
+            "coverageNote": self._build_feed_coverage_note(uses_weekly, uses_monthly),
+            "sourceLabel": self._build_feed_source_label(uses_weekly, uses_monthly),
+            "sourceNote": self._build_feed_source_note(uses_weekly, uses_monthly),
             "sourceMode": "official",
-            "sourceKind": source_profile["kind"],
+            "sourceKind": self._build_feed_source_kind(uses_weekly, uses_monthly),
             "periodLabel": latest_period["label"] if latest_period else "",
             "updatedAt": updated_at,
             "items": items,
@@ -774,6 +839,45 @@ class ConabMarketProvider:
                 "sourceNote": "O arquivo semanal nao respondeu nesta tentativa. Usamos a base mensal oficial da Conab por UF para manter a aba com referencia oficial.",
             },
         ]
+
+    def _build_feed_description(self, uses_weekly, uses_monthly):
+        if uses_weekly and uses_monthly:
+            return "Venda e compra aparecem juntas nesta aba. Hoje os precos de venda usam a base semanal da Conab e os itens de compra usam a base mensal oficial."
+        if uses_weekly:
+            return "Venda e compra aparecem juntas nesta aba. Nesta rodada a leitura oficial veio pela base semanal da Conab."
+        if uses_monthly:
+            return "Venda e compra aparecem juntas nesta aba. Nesta rodada a leitura oficial veio pela base mensal da Conab."
+        return "Aqui ficam os principais precos organizados para leitura rapida."
+
+    def _build_feed_coverage_note(self, uses_weekly, uses_monthly):
+        if uses_weekly and uses_monthly:
+            return "Nesta fase, venda usa referencia semanal e compra usa referencia mensal, sempre focadas em Goias."
+        if uses_monthly:
+            return "Nesta fase, a aba acompanha referencias oficiais mensais da Conab para Goias."
+        return "Nesta fase, a aba acompanha referencias oficiais da Conab para Goias."
+
+    def _build_feed_source_label(self, uses_weekly, uses_monthly):
+        if uses_weekly and uses_monthly:
+            return "Conab - semanal e mensal por UF"
+        if uses_monthly:
+            return "Conab - Precos agropecuarios mensal por UF"
+        return "Conab - Precos agropecuarios semanal por UF"
+
+    def _build_feed_source_note(self, uses_weekly, uses_monthly):
+        if uses_weekly and uses_monthly:
+            return "Para ficar mais util no dia a dia, a aba mistura venda pela base semanal oficial e compras pela base mensal oficial da Conab."
+        if uses_monthly:
+            return "Nesta rodada usamos a base mensal oficial da Conab para manter a aba atualizada."
+        return "Usamos o arquivo semanal oficial da Conab por UF e filtramos os itens mais relevantes para a rotina do app em Goias."
+
+    def _build_feed_source_kind(self, uses_weekly, uses_monthly):
+        if uses_weekly and uses_monthly:
+            return "weekly-monthly"
+        if uses_monthly:
+            return "monthly"
+        if uses_weekly:
+            return "weekly"
+        return ""
 
     def _fetch_rows(self, source_profile):
         content = self._download_content(source_profile["url"])
@@ -908,7 +1012,41 @@ class ConabMarketProvider:
         updated_item["sourceMode"] = "official-cache"
         return updated_item
 
-    def _build_item(self, rows, config):
+    def _build_item(self, rows_by_kind, config):
+        matching = []
+        source_kind = ""
+        for preferred_kind in config.get("sourcePriority", ["weekly", "monthly"]):
+            rows = rows_by_kind.get(preferred_kind) or []
+            if not rows:
+                continue
+            matching = self._matching_rows(rows, config)
+            if matching:
+                source_kind = preferred_kind
+                break
+
+        if not matching:
+            for rows in rows_by_kind.values():
+                matching = self._matching_rows(rows, config)
+                if matching:
+                    source_kind = matching[0].get("_source_kind", "")
+                    break
+
+        if not matching:
+            return {
+                "slug": config["slug"],
+                "category": config.get("category", "sales"),
+                "label": config["label"],
+                "available": False,
+                "note": "A fonte oficial ainda nao trouxe esse item para a cobertura atual em Goias.",
+                "source": "Conab",
+                "sourceMode": "official",
+                "history": [],
+                "unitLabel": config.get("unitLabel", ""),
+            }
+
+        return self._build_item_from_matching(matching, config, source_kind or matching[0].get("_source_kind", ""))
+
+    def _matching_rows(self, rows, config):
         config_product_id = str(config.get("productId") or "").strip()
         if config_product_id:
             matching = [row for row in rows if str(row.get("id_produto") or "").strip() == config_product_id]
@@ -919,25 +1057,9 @@ class ConabMarketProvider:
                 if row.get("_product_key") == self._normalize_key(config["product"])
                 and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
             ]
+        return matching
 
-        if not matching:
-            matching = [
-                row
-                for row in rows
-                if row.get("_product_key") == self._normalize_key(config["product"])
-                and row.get("_classification_key", "").startswith(self._normalize_key(config["classification"]))
-            ]
-        if not matching:
-            return {
-                "slug": config["slug"],
-                "label": config["label"],
-                "available": False,
-                "note": "A fonte oficial ainda nao trouxe esse item para a cobertura atual em Goias.",
-                "source": "Conab - semanal por UF",
-                "sourceMode": "official",
-                "history": [],
-            }
-
+    def _build_item_from_matching(self, matching, config, source_kind):
         chosen_level = None
         level_rows = []
         for level in self.PREFERRED_LEVELS:
@@ -969,6 +1091,7 @@ class ConabMarketProvider:
         ]
         return {
             "slug": config["slug"],
+            "category": config.get("category", "sales"),
             "label": config["label"],
             "available": True,
             "price": current_price,
@@ -977,9 +1100,11 @@ class ConabMarketProvider:
             "referenceLabel": self._title_label(chosen_level),
             "periodLabel": period,
             "summary": self._describe_change(change, chosen_level),
-            "source": "Conab - semanal por UF",
+            "source": self._source_label_for_kind(source_kind),
             "sourceMode": "official",
+            "sourceKind": source_kind,
             "history": history,
+            "unitLabel": config.get("unitLabel", ""),
             "rawPeriodKey": {
                 "year": int(latest.get("ano") or 0),
                 "month": int(latest.get("mes") or 0),
@@ -987,6 +1112,11 @@ class ConabMarketProvider:
                 "label": period,
             },
         }
+
+    def _source_label_for_kind(self, source_kind):
+        if source_kind == "monthly":
+            return "Conab - mensal por UF"
+        return "Conab - semanal por UF"
 
     def _build_overview_item(self, items, slug):
         item = next((entry for entry in items if entry.get("slug") == slug and entry.get("available")), None)
@@ -2357,6 +2487,7 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
             fallback_items = [
                 {
                     "slug": "soy",
+                    "category": "sales",
                     "label": seed_market["soy"]["label"],
                     "available": True,
                     "price": seed_market["soy"]["price"],
@@ -2367,9 +2498,11 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "source": seed_market["soy"]["source"],
                     "sourceMode": "fallback",
                     "history": [],
+                    "unitLabel": "por saca de 60 kg",
                 },
                 {
                     "slug": "corn",
+                    "category": "sales",
                     "label": seed_market["corn"]["label"],
                     "available": True,
                     "price": seed_market["corn"]["price"],
@@ -2380,15 +2513,73 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                     "source": seed_market["corn"]["source"],
                     "sourceMode": "fallback",
                     "history": [],
+                    "unitLabel": "por saca de 60 kg",
                 },
                 {
                     "slug": "sorghum",
+                    "category": "sales",
                     "label": "Sorgo saca 60kg",
                     "available": False,
                     "note": "Ainda nao existe referencia pronta no fallback local para esse item.",
                     "source": "Fallback local do CampoSat",
                     "sourceMode": "fallback",
                     "history": [],
+                    "unitLabel": "por saca de 60 kg",
+                },
+                {
+                    "slug": "soy-seed",
+                    "category": "purchases",
+                    "label": "Semente de soja",
+                    "available": False,
+                    "note": "As compras dependem da leitura oficial da Conab para aparecer aqui.",
+                    "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
+                    "unitLabel": "por kg",
+                },
+                {
+                    "slug": "corn-seed",
+                    "category": "purchases",
+                    "label": "Semente de milho",
+                    "available": False,
+                    "note": "As compras dependem da leitura oficial da Conab para aparecer aqui.",
+                    "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
+                    "unitLabel": "por kg",
+                },
+                {
+                    "slug": "urea",
+                    "category": "purchases",
+                    "label": "Ureia",
+                    "available": False,
+                    "note": "As compras dependem da leitura oficial da Conab para aparecer aqui.",
+                    "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
+                    "unitLabel": "por kg",
+                },
+                {
+                    "slug": "map-fertilizer",
+                    "category": "purchases",
+                    "label": "MAP",
+                    "available": False,
+                    "note": "As compras dependem da leitura oficial da Conab para aparecer aqui.",
+                    "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
+                    "unitLabel": "por kg",
+                },
+                {
+                    "slug": "potassium-chloride",
+                    "category": "purchases",
+                    "label": "Cloreto de potassio",
+                    "available": False,
+                    "note": "As compras dependem da leitura oficial da Conab para aparecer aqui.",
+                    "source": "Fallback local do CampoSat",
+                    "sourceMode": "fallback",
+                    "history": [],
+                    "unitLabel": "por kg",
                 },
             ]
             self.send_json(

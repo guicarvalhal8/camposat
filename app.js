@@ -36,7 +36,8 @@ const state = {
     loading: false,
     error: null,
     data: null,
-    filter: "all"
+    filter: "all",
+    section: "sales"
   },
   providers: null,
   meta: null,
@@ -1693,6 +1694,23 @@ function renderView(route, activePlot) {
 function renderMarketView() {
   const feed = state.marketPage.data;
   const sourceMode = feed?.sourceMode || (state.marketPage.error ? "fallback" : "official");
+  const currentSection = state.marketPage.section || "sales";
+  const filterLabel = currentSection === "sales" ? "Filtrar cultura" : "Filtrar item de compra";
+  const filterOptions = currentSection === "sales"
+    ? [
+        ["all", "Todas"],
+        ["soy", "Soja"],
+        ["corn", "Milho"],
+        ["sorghum", "Sorgo"],
+      ]
+    : [
+        ["all", "Todos"],
+        ["soy-seed", "Semente de soja"],
+        ["corn-seed", "Semente de milho"],
+        ["urea", "Ureia"],
+        ["map-fertilizer", "MAP"],
+        ["potassium-chloride", "Cloreto de potassio"],
+      ];
   const sourceLabel =
     sourceMode === "official"
       ? "Fonte oficial"
@@ -1706,16 +1724,17 @@ function renderMarketView() {
           <div>
             <span class="eyebrow">Mercado</span>
             <h3>Principais precos acompanhados</h3>
-            <p>Esta aba puxa os precos pela API do app. Por enquanto, a cobertura esta concentrada em Goias e pode crescer depois para outras regioes.</p>
+            <p>Esta aba puxa os precos pela API do app. Aqui voce pode alternar entre o que a fazenda vende e o que costuma comprar, sempre com foco atual em Goias.</p>
           </div>
           <div class="card-actions">
+            <div class="market-section-toggle">
+              <button class="button-secondary ${currentSection === "sales" ? "active" : ""}" type="button" data-action="set-market-section" data-section="sales">Venda</button>
+              <button class="button-secondary ${currentSection === "purchases" ? "active" : ""}" type="button" data-action="set-market-section" data-section="purchases">Compras</button>
+            </div>
             <label class="toolbar-field market-filter-field">
-              <span>Filtrar cultura</span>
+              <span>${filterLabel}</span>
               <select name="marketFilter">
-                ${renderOption("all", state.marketPage.filter, "Todas")}
-                ${renderOption("soy", state.marketPage.filter, "Soja")}
-                ${renderOption("corn", state.marketPage.filter, "Milho")}
-                ${renderOption("sorghum", state.marketPage.filter, "Sorgo")}
+                ${filterOptions.map(([value, label]) => renderOption(value, state.marketPage.filter, label)).join("")}
               </select>
             </label>
             <button class="button-secondary" type="button" data-action="refresh-market" ${state.marketPage.loading ? "disabled" : ""}>
@@ -3380,9 +3399,11 @@ function renderMarketCards() {
 
 function renderMarketFeedCards(feed) {
   const allItems = Array.isArray(feed?.items) ? feed.items : [];
+  const section = state.marketPage.section || "sales";
+  const sectionItems = allItems.filter((item) => (item.category || "sales") === section);
   const items = state.marketPage.filter === "all"
-    ? allItems
-    : allItems.filter((item) => item.slug === state.marketPage.filter);
+    ? sectionItems
+    : sectionItems.filter((item) => item.slug === state.marketPage.filter);
   if (!items.length) {
     return renderEmptyState("Sem precos nessa rodada", "A API do Mercado ainda nao trouxe itens suficientes para montar esse painel.");
   }
@@ -3394,6 +3415,7 @@ function renderMarketFeedCards(feed) {
           <div class="metric-box market-page-card">
             <span class="metric-label">${item.label}</span>
             <span class="metric-value market-empty-price">Sem referencia</span>
+            ${item.unitLabel ? `<span class="tiny market-unit-label">${item.unitLabel}</span>` : ""}
             <p class="metric-help">${item.note || "Ainda nao encontramos esse item na cobertura atual da fonte."}</p>
             <div class="market-history-empty">Historico ainda indisponivel para esse item.</div>
             <span class="tiny market-source">Fonte: ${item.source || "Conab"}</span>
@@ -3404,6 +3426,7 @@ function renderMarketFeedCards(feed) {
         <div class="metric-box market-page-card">
           <span class="metric-label">${item.label}</span>
           <span class="metric-value">${formatCurrency(item.price)}</span>
+          ${item.unitLabel ? `<span class="tiny market-unit-label">${item.unitLabel}</span>` : ""}
           <span class="metric-delta ${item.change >= 0 ? "up" : "down"}">${formatSigned(item.change)}</span>
           <p class="metric-help">${item.summary || describeMarketMove(item.change)}</p>
           <div class="market-history-block">
@@ -3438,8 +3461,9 @@ function buildFallbackMarketHistory(item) {
 
 function buildOfflineMarketPageData() {
   const updatedAt = state.market?.updatedAt || nowLabel();
-  const makeItem = (slug, item) => ({
+  const makeItem = (slug, item, category = "sales", unitLabel = "por saca de 60 kg") => ({
     slug,
+    category,
     label: item.label,
     price: item.price,
     change: item.change,
@@ -3447,7 +3471,8 @@ function buildOfflineMarketPageData() {
     referenceLabel: "Referencia local",
     periodLabel: formatDateTime(updatedAt),
     summary: describeMarketMove(item.change),
-    source: item.source
+    source: item.source,
+    unitLabel
   });
   return {
     title: "Mercado em Goias",
@@ -3459,17 +3484,24 @@ function buildOfflineMarketPageData() {
     sourceMode: "fallback",
     updatedAt,
     items: [
-      { ...makeItem("soy", state.market?.soy || { label: "Soja saca 60kg", price: 0, change: 0, source: "Referencia local" }), sourceMode: "fallback", history: [] },
-      { ...makeItem("corn", state.market?.corn || { label: "Milho saca 60kg", price: 0, change: 0, source: "Referencia local" }), sourceMode: "fallback", history: [] },
+      { ...makeItem("soy", state.market?.soy || { label: "Soja saca 60kg", price: 0, change: 0, source: "Referencia local" }, "sales", "por saca de 60 kg"), sourceMode: "fallback", history: [] },
+      { ...makeItem("corn", state.market?.corn || { label: "Milho saca 60kg", price: 0, change: 0, source: "Referencia local" }, "sales", "por saca de 60 kg"), sourceMode: "fallback", history: [] },
       {
         slug: "sorghum",
+        category: "sales",
         label: "Sorgo saca 60kg",
         available: false,
         note: "O fallback local ainda nao traz uma referencia pronta para sorgo.",
         source: "Fallback local do CampoSat",
         sourceMode: "fallback",
-        history: []
-      }
+        history: [],
+        unitLabel: "por saca de 60 kg"
+      },
+      { slug: "soy-seed", category: "purchases", label: "Semente de soja", available: false, note: "As compras dependem da fonte oficial da Conab para aparecer aqui.", source: "Fallback local do CampoSat", sourceMode: "fallback", history: [], unitLabel: "por kg" },
+      { slug: "corn-seed", category: "purchases", label: "Semente de milho", available: false, note: "As compras dependem da fonte oficial da Conab para aparecer aqui.", source: "Fallback local do CampoSat", sourceMode: "fallback", history: [], unitLabel: "por kg" },
+      { slug: "urea", category: "purchases", label: "Ureia", available: false, note: "As compras dependem da fonte oficial da Conab para aparecer aqui.", source: "Fallback local do CampoSat", sourceMode: "fallback", history: [], unitLabel: "por kg" },
+      { slug: "map-fertilizer", category: "purchases", label: "MAP", available: false, note: "As compras dependem da fonte oficial da Conab para aparecer aqui.", source: "Fallback local do CampoSat", sourceMode: "fallback", history: [], unitLabel: "por kg" },
+      { slug: "potassium-chloride", category: "purchases", label: "Cloreto de potassio", available: false, note: "As compras dependem da fonte oficial da Conab para aparecer aqui.", source: "Fallback local do CampoSat", sourceMode: "fallback", history: [], unitLabel: "por kg" }
     ]
   };
 }
@@ -3586,6 +3618,14 @@ async function handleClick(event) {
   const refreshMarketButton = event.target.closest("[data-action='refresh-market']");
   if (refreshMarketButton) {
     await loadMarketPageData(true);
+    return;
+  }
+
+  const marketSectionButton = event.target.closest("[data-action='set-market-section']");
+  if (marketSectionButton) {
+    state.marketPage.section = marketSectionButton.dataset.section || "sales";
+    state.marketPage.filter = "all";
+    render();
     return;
   }
 

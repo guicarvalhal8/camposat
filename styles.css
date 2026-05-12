@@ -2011,6 +2011,17 @@ optgroup {
   min-width: 220px;
 }
 
+.market-section-toggle {
+  display: inline-flex;
+  gap: 10px;
+}
+
+.market-section-toggle .button-secondary.active {
+  border-color: rgba(103, 241, 201, 0.24);
+  background: rgba(103, 241, 201, 0.1);
+  color: var(--text);
+}
+
 .market-origin-pill {
   display: inline-flex;
   align-items: center;
@@ -2047,6 +2058,12 @@ optgroup {
 
 .market-history-block {
   margin-top: 12px;
+}
+
+.market-unit-label {
+  display: inline-block;
+  margin-top: 6px;
+  color: var(--muted);
 }
 
 .market-sparkline {
