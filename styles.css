@@ -1999,6 +1999,52 @@ optgroup {
   color: var(--muted);
 }
 
+.market-page-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.market-page-card {
+  min-height: 208px;
+}
+
+.market-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.market-empty-price {
+  color: var(--muted);
+  font-size: 1.3rem;
+}
+
+.market-source-panel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.market-source-box {
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.market-source-box strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1rem;
+}
+
+.market-source-box p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .market-context-note {
   grid-column: 1 / -1;
   padding: 14px 16px;
@@ -2126,6 +2172,10 @@ optgroup {
 
   .market-module-tags {
     justify-content: flex-start;
+  }
+
+  .market-source-panel {
+    grid-template-columns: 1fr;
   }
 }
 

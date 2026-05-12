@@ -32,6 +32,11 @@ const state = {
   plots: [],
   alerts: [],
   market: null,
+  marketPage: {
+    loading: false,
+    error: null,
+    data: null
+  },
   providers: null,
   meta: null,
   filters: { ...defaultFilters },
@@ -124,6 +129,9 @@ function applyBootstrapPayload(payload, options = {}) {
   state.plots = payload.plots || [];
   state.alerts = payload.alerts || [];
   state.market = payload.market || null;
+  state.marketPage.loading = false;
+  state.marketPage.error = null;
+  state.marketPage.data = null;
   state.providers = payload.providers || null;
   state.meta = payload.meta || null;
   ensureSelectedAgronomist();
@@ -724,6 +732,10 @@ function render() {
   const portfolioPlots = getPortfolioPlots();
   const activePlot = getPlot(route.plotId) || getMostCriticalPlot(portfolioPlots) || portfolioPlots[0] || null;
 
+  if (route.view === "market" && !state.marketPage.loading && !state.marketPage.data && !state.marketPage.error) {
+    void loadMarketPageData();
+  }
+
   if (state.loading) {
     app.innerHTML = renderLoadingShell();
     return;
@@ -1256,6 +1268,9 @@ function getRoute() {
   if (!parts.length || parts[0] === "talhoes") {
     return { view: "plots" };
   }
+  if (parts[0] === "mercado") {
+    return { view: "market" };
+  }
   if (parts[0] === "fazendas") {
     return { view: "farms" };
   }
@@ -1447,6 +1462,13 @@ function renderSidebar(route) {
           icon: iconGrid()
         },
         {
+          href: "#/mercado",
+          key: "market",
+          title: "Mercado",
+          text: "Veja os principais precos acompanhados",
+          icon: iconLeaf()
+        },
+        {
           href: "#/fazendas",
           key: "farms",
           title: "Fazendas",
@@ -1588,6 +1610,16 @@ function renderTopbar(route, activePlot) {
     primaryKpiValue = String(stats.farmCount);
     secondaryKpiLabel = "Areas nessas fazendas";
     secondaryKpiValue = String(getPortfolioPlots().length);
+  } else if (route.view === "market") {
+    current = {
+      title: "Mercado",
+      text: "Acompanhe os principais precos puxados pela API do app e veja o que ja esta disponivel para Goias."
+    };
+    modeLabel = "Mercado";
+    primaryKpiLabel = "Itens acompanhados";
+    primaryKpiValue = String(state.marketPage.data?.items?.filter((item) => item.available).length || 0);
+    secondaryKpiLabel = "Cobertura";
+    secondaryKpiValue = state.marketPage.data?.coverageLabel || "Goias";
   } else if (route.view === "detail" && activePlot) {
     const scene = getActiveScene(activePlot);
     current = {
@@ -1650,10 +1682,91 @@ function renderTopbar(route, activePlot) {
 
 function renderView(route, activePlot) {
   if (route.view === "form") return renderFormView();
+  if (route.view === "market") return renderMarketView();
   if (route.view === "farms") return renderFarmsView();
   if (route.view === "detail" && activePlot) return renderDetailView(activePlot);
   if (route.view === "alerts") return renderAlertsView();
   return renderDashboardView();
+}
+
+function renderMarketView() {
+  const feed = state.marketPage.data;
+  return `
+    <div class="workspace-grid">
+      <section class="panel">
+        <div class="list-head">
+          <div>
+            <span class="eyebrow">Mercado</span>
+            <h3>Principais precos acompanhados</h3>
+            <p>Esta aba puxa os precos pela API do app. Por enquanto, a cobertura esta concentrada em Goias e pode crescer depois para outras regioes.</p>
+          </div>
+          <div class="card-actions">
+            <button class="button-secondary" type="button" data-action="refresh-market" ${state.marketPage.loading ? "disabled" : ""}>
+              ${state.marketPage.loading ? "Atualizando..." : "Atualizar mercado"}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      ${
+        !feed
+          ? `<section class="panel">${renderEmptyState("Carregando mercado", "Estamos buscando os precos mais recentes para essa aba.")}</section>`
+          : `
+              ${
+                state.marketPage.error
+                  ? `
+                    <section class="panel">
+                      <div class="market-context-note">
+                        <strong>Usando referencias locais nesta rodada.</strong>
+                        <p>${state.marketPage.error}</p>
+                      </div>
+                    </section>
+                  `
+                  : ""
+              }
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <span class="eyebrow">Resumo da cobertura</span>
+                    <h3>${feed.title || "Mercado em Goias"}</h3>
+                    <p>${feed.description || "Precos organizados para leitura rapida do agronomo."}</p>
+                  </div>
+                </div>
+                <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
+                  ${renderMarketFeedCards(feed)}
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="panel-header">
+                  <div>
+                    <span class="eyebrow">De onde vem</span>
+                    <h3>Fonte oficial usada hoje</h3>
+                    <p>${feed.sourceNote || "Os dados foram organizados pelo backend do CampoSat para facilitar a leitura dentro do app."}</p>
+                  </div>
+                </div>
+                <div class="market-source-panel">
+                  <div class="market-source-box">
+                    <span class="metric-label">Cobertura atual</span>
+                    <strong>${feed.coverageLabel || "Goias"}</strong>
+                    <p>${feed.coverageNote || "Hoje estamos mostrando apenas referencias de Goias."}</p>
+                  </div>
+                  <div class="market-source-box">
+                    <span class="metric-label">Atualizado em</span>
+                    <strong>${feed.updatedAt ? formatDateTime(feed.updatedAt) : "--"}</strong>
+                    <p>${feed.sourceLabel || "Fonte oficial de precos agropecuarios."}</p>
+                  </div>
+                  <div class="market-source-box">
+                    <span class="metric-label">Expansao prevista</span>
+                    <strong>Outras regioes e culturas</strong>
+                    <p>Assim que a proxima fonte entrar, essa mesma aba pode crescer sem mudar o restante do aplicativo.</p>
+                  </div>
+                </div>
+              </section>
+            `
+      }
+    </div>
+  `;
 }
 
 function renderFarmsView() {
@@ -3238,6 +3351,68 @@ function renderMarketCards() {
   `;
 }
 
+function renderMarketFeedCards(feed) {
+  const items = Array.isArray(feed?.items) ? feed.items : [];
+  if (!items.length) {
+    return renderEmptyState("Sem precos nessa rodada", "A API do Mercado ainda nao trouxe itens suficientes para montar esse painel.");
+  }
+  return items
+    .map((item) => {
+      if (!item.available) {
+        return `
+          <div class="metric-box market-page-card">
+            <span class="metric-label">${item.label}</span>
+            <span class="metric-value market-empty-price">Sem referencia</span>
+            <p class="metric-help">${item.note || "Ainda nao encontramos esse item na cobertura atual da fonte."}</p>
+            <span class="tiny market-source">Fonte: ${item.source || "Conab"}</span>
+          </div>
+        `;
+      }
+      return `
+        <div class="metric-box market-page-card">
+          <span class="metric-label">${item.label}</span>
+          <span class="metric-value">${formatCurrency(item.price)}</span>
+          <span class="metric-delta ${item.change >= 0 ? "up" : "down"}">${formatSigned(item.change)}</span>
+          <p class="metric-help">${item.summary || describeMarketMove(item.change)}</p>
+          <div class="market-page-meta">
+            <span class="tiny">${item.referenceLabel || "Referencia"}</span>
+            <span class="tiny">${item.periodLabel || "--"}</span>
+          </div>
+          <span class="tiny market-source">Fonte: ${item.source || "Conab"}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function buildOfflineMarketPageData() {
+  const updatedAt = state.market?.updatedAt || nowLabel();
+  const makeItem = (slug, item) => ({
+    slug,
+    label: item.label,
+    price: item.price,
+    change: item.change,
+    available: true,
+    referenceLabel: "Referencia local",
+    periodLabel: formatDateTime(updatedAt),
+    summary: describeMarketMove(item.change),
+    source: item.source
+  });
+  return {
+    title: "Mercado em Goias",
+    description: "Enquanto a fonte externa nao responde, o app continua mostrando as referencias locais que ja vinham no painel.",
+    coverageLabel: "Goias",
+    coverageNote: "Hoje esta aba acompanha apenas referencias de Goias.",
+    sourceLabel: "Fallback local do CampoSat",
+    sourceNote: "Quando a rota oficial nao responde, o app cai para os valores locais ja conhecidos para nao deixar a aba vazia.",
+    updatedAt,
+    items: [
+      makeItem("soy", state.market?.soy || { label: "Soja saca 60kg", price: 0, change: 0, source: "Referencia local" }),
+      makeItem("corn", state.market?.corn || { label: "Milho saca 60kg", price: 0, change: 0, source: "Referencia local" })
+    ]
+  };
+}
+
 function renderAlertSummaryCard(alert) {
   return `
     <div class="history-item">
@@ -3313,7 +3488,46 @@ function handleUnauthorized(error) {
   return true;
 }
 
+async function loadMarketPageData(force = false) {
+  if (state.marketPage.loading) return;
+  if (!force && state.marketPage.data) return;
+
+  state.marketPage.loading = true;
+  state.marketPage.error = null;
+  render();
+
+  try {
+    if (state.offlineMode) {
+      state.marketPage.data = buildOfflineMarketPageData();
+      state.marketPage.loading = false;
+      render();
+      return;
+    }
+    const payload = await api("/api/market");
+    state.marketPage.data = payload;
+    state.marketPage.loading = false;
+    state.marketPage.error = null;
+    if (payload?.overview) {
+      state.market = payload.overview;
+    }
+    render();
+  } catch (error) {
+    if (handleUnauthorized(error)) return;
+    state.marketPage.loading = false;
+    state.marketPage.error = error.message || "Nao foi possivel carregar o Mercado agora.";
+    state.marketPage.data = buildOfflineMarketPageData();
+    pushToast("Mercado em fallback", "A fonte externa nao respondeu e mantivemos as referencias locais para voce continuar.");
+    render();
+  }
+}
+
 async function handleClick(event) {
+  const refreshMarketButton = event.target.closest("[data-action='refresh-market']");
+  if (refreshMarketButton) {
+    await loadMarketPageData(true);
+    return;
+  }
+
   const geometryModeButton = event.target.closest("[data-action='set-geometry-mode']");
   if (geometryModeButton) {
     setGeometryMode(geometryModeButton.dataset.mode || "auto");

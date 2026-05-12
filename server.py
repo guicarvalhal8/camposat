@@ -1,6 +1,7 @@
 import argparse
 import base64
 import copy
+import csv
 import hashlib
 import hmac
 import io
@@ -652,11 +653,194 @@ class MockWeatherProvider:
         }
 
 
-class MockMarketProvider:
+class ConabMarketProvider:
+    WEEKLY_UF_URL = "https://portaldeinformacoes.conab.gov.br/downloads/arquivos/PrecosSemanalUF.txt"
+    COVERAGE_UF = "GO"
+
+    TRACKED_PRODUCTS = [
+        {
+            "slug": "soy",
+            "product": "SOJA",
+            "classification": "EM GRÃOS",
+            "label": "Soja saca 60kg",
+            "multiplier": 60.0,
+        },
+        {
+            "slug": "corn",
+            "product": "MILHO",
+            "classification": "EM GRÃOS",
+            "label": "Milho saca 60kg",
+            "multiplier": 60.0,
+        },
+        {
+            "slug": "sorghum",
+            "product": "SORGO",
+            "classification": "EM GRÃOS",
+            "label": "Sorgo saca 60kg",
+            "multiplier": 60.0,
+        },
+    ]
+
+    PREFERRED_LEVELS = ["PREÇO RECEBIDO P/ PR", "ATACADO", "VAREJO"]
+
+    def __init__(self):
+        self._latest_feed = None
+
     def snapshot(self, current_market):
+        if self._latest_feed and self._latest_feed.get("overview"):
+            return copy.deepcopy(self._latest_feed["overview"])
         market = copy.deepcopy(current_market)
         market["updatedAt"] = now_label()
         return market
+
+    def fetch_market_feed(self):
+        rows = self._fetch_rows()
+        if not rows:
+            return None
+
+        items = [self._build_item(rows, config) for config in self.TRACKED_PRODUCTS]
+        available_items = [item for item in items if item.get("available")]
+        if not available_items:
+            return None
+
+        latest_period = max((item["rawPeriodKey"] for item in available_items), default=None)
+        updated_at = now_label()
+        overview = {
+            "updatedAt": updated_at,
+            "soy": self._build_overview_item(items, "soy"),
+            "corn": self._build_overview_item(items, "corn"),
+        }
+        feed = {
+            "title": "Mercado em Goias",
+            "description": "Aqui ficam os principais precos organizados para leitura rapida. Hoje a cobertura esta focada em Goias e pronta para crescer depois.",
+            "coverageLabel": "Goias",
+            "coverageNote": "Nesta primeira fase, a aba acompanha referencias da Conab para Goias.",
+            "sourceLabel": "Conab - Precos agropecuarios semanal por UF",
+            "sourceNote": "Usamos o arquivo semanal oficial da Conab por UF e filtramos os itens mais relevantes para a rotina do app em Goias.",
+            "periodLabel": latest_period["label"] if latest_period else "",
+            "updatedAt": updated_at,
+            "items": items,
+            "overview": overview,
+        }
+        self._latest_feed = copy.deepcopy(feed)
+        return feed
+
+    def _fetch_rows(self):
+        request = urllib_request.Request(
+            self.WEEKLY_UF_URL,
+            headers={"User-Agent": "CampoSat/1.0"},
+            method="GET",
+        )
+        try:
+            with urllib_request.urlopen(request, timeout=30) as response:
+                content = response.read().decode("utf-8-sig", errors="replace")
+        except Exception:
+            return []
+
+        reader = csv.DictReader(content.splitlines(), delimiter=";")
+        rows = []
+        for raw_row in reader:
+            row = {key.strip(): (value or "").strip() for key, value in raw_row.items()}
+            if row.get("uf") != self.COVERAGE_UF:
+                continue
+            rows.append(row)
+        return rows
+
+    def _build_item(self, rows, config):
+        matching = [
+            row
+            for row in rows
+            if row.get("produto") == config["product"] and row.get("classificao_produto") == config["classification"]
+        ]
+        if not matching:
+            return {
+                "slug": config["slug"],
+                "label": config["label"],
+                "available": False,
+                "note": "A fonte oficial ainda nao trouxe esse item para a cobertura atual em Goias.",
+                "source": "Conab - semanal por UF",
+            }
+
+        chosen_level = None
+        level_rows = []
+        for level in self.PREFERRED_LEVELS:
+            candidate_rows = [row for row in matching if row.get("dsc_nivel_comercializacao") == level]
+            if candidate_rows:
+                chosen_level = level
+                level_rows = candidate_rows
+                break
+        if not level_rows:
+            level_rows = matching
+            chosen_level = matching[0].get("dsc_nivel_comercializacao", "Referência oficial")
+
+        ordered_rows = sorted(level_rows, key=self._period_sort_key)
+        latest = ordered_rows[-1]
+        previous = ordered_rows[-2] if len(ordered_rows) > 1 else None
+        current_value = self._parse_decimal(latest.get("valor_produto_kg"))
+        previous_value = self._parse_decimal(previous.get("valor_produto_kg")) if previous else current_value
+        current_price = round(current_value * config["multiplier"], 2)
+        previous_price = round(previous_value * config["multiplier"], 2)
+        change = round(current_price - previous_price, 2)
+        period = self._period_label(latest)
+        return {
+            "slug": config["slug"],
+            "label": config["label"],
+            "available": True,
+            "price": current_price,
+            "previousPrice": previous_price,
+            "change": change,
+            "referenceLabel": chosen_level.title(),
+            "periodLabel": period,
+            "summary": self._describe_change(change, chosen_level),
+            "source": "Conab - semanal por UF",
+            "rawPeriodKey": {
+                "year": int(latest.get("ano") or 0),
+                "month": int(latest.get("mes") or 0),
+                "week": int(latest.get("semana") or 0),
+                "label": period,
+            },
+        }
+
+    def _build_overview_item(self, items, slug):
+        item = next((entry for entry in items if entry.get("slug") == slug and entry.get("available")), None)
+        if not item:
+            return {
+                "label": "Indisponivel",
+                "price": 0,
+                "change": 0,
+                "source": "Conab - semanal por UF",
+            }
+        return {
+            "label": item["label"],
+            "price": item["price"],
+            "change": item["change"],
+            "source": "Conab - semanal por UF",
+        }
+
+    def _period_sort_key(self, row):
+        return (
+            int(row.get("ano") or 0),
+            int(row.get("mes") or 0),
+            int(row.get("semana") or 0),
+        )
+
+    def _period_label(self, row):
+        return row.get("data_inicial_final_semana") or "Periodo nao informado"
+
+    def _parse_decimal(self, value):
+        normalized = str(value or "0").strip().replace(".", "").replace(",", ".")
+        try:
+            return float(normalized)
+        except ValueError:
+            return 0.0
+
+    def _describe_change(self, change, chosen_level):
+        level = chosen_level.lower() if chosen_level else "referência oficial"
+        if change > 0:
+            return f"Subiu em relacao ao periodo anterior dentro de {level}."
+        if change < 0:
+            return f"Caiu em relacao ao periodo anterior dentro de {level}."
+        return f"Ficou no mesmo nivel no recorte de {level}."
 
 
 class MockWhatsAppProvider:
@@ -1076,7 +1260,7 @@ function evaluatePixel(sample) {
 class ProviderRegistry:
     def __init__(self):
         self.weather = MockWeatherProvider()
-        self.market = MockMarketProvider()
+        self.market = ConabMarketProvider()
         self.whatsapp = MockWhatsAppProvider()
         self.satellite = MockSatelliteProvider(self.weather)
         self.satellite_images = SentinelHubImageProvider()
@@ -1942,6 +2126,62 @@ class CampoSatHandler(SimpleHTTPRequestHandler):
                 return
             with open_db() as connection:
                 self.send_json(portfolio_payload(connection, user))
+            return
+
+        if parsed.path == "/api/market":
+            user = self.require_user()
+            if not user:
+                return
+            market_feed = REGISTRY.market.fetch_market_feed()
+            if market_feed:
+                self.send_json(market_feed)
+                return
+
+            seed_market = seed_market_snapshot()
+            fallback_items = [
+                {
+                    "slug": "soy",
+                    "label": seed_market["soy"]["label"],
+                    "available": True,
+                    "price": seed_market["soy"]["price"],
+                    "change": seed_market["soy"]["change"],
+                    "referenceLabel": "Referencia local",
+                    "periodLabel": seed_market.get("updatedAt", now_label()),
+                    "summary": "A fonte externa nao respondeu nesta tentativa, entao mantivemos a ultima referencia local.",
+                    "source": seed_market["soy"]["source"],
+                },
+                {
+                    "slug": "corn",
+                    "label": seed_market["corn"]["label"],
+                    "available": True,
+                    "price": seed_market["corn"]["price"],
+                    "change": seed_market["corn"]["change"],
+                    "referenceLabel": "Referencia local",
+                    "periodLabel": seed_market.get("updatedAt", now_label()),
+                    "summary": "A fonte externa nao respondeu nesta tentativa, entao mantivemos a ultima referencia local.",
+                    "source": seed_market["corn"]["source"],
+                },
+                {
+                    "slug": "sorghum",
+                    "label": "Sorgo saca 60kg",
+                    "available": False,
+                    "note": "Ainda nao existe referencia pronta no fallback local para esse item.",
+                    "source": "Fallback local do CampoSat",
+                },
+            ]
+            self.send_json(
+                {
+                    "title": "Mercado em Goias",
+                    "description": "A rota do Mercado tentou usar a fonte oficial e caiu para o fallback local nesta rodada.",
+                    "coverageLabel": "Goias",
+                    "coverageNote": "Por enquanto, a aba acompanha apenas referencias de Goias.",
+                    "sourceLabel": "Fallback local do CampoSat",
+                    "sourceNote": "Quando a fonte externa da Conab nao responde, o backend entrega as referencias locais para manter a aba usavel.",
+                    "updatedAt": now_label(),
+                    "items": fallback_items,
+                    "overview": REGISTRY.market.snapshot(seed_market),
+                }
+            )
             return
 
         if parsed.path == "/api/alerts":
