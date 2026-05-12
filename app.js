@@ -1694,23 +1694,6 @@ function renderView(route, activePlot) {
 function renderMarketView() {
   const feed = state.marketPage.data;
   const sourceMode = feed?.sourceMode || (state.marketPage.error ? "fallback" : "official");
-  const currentSection = state.marketPage.section || "sales";
-  const filterLabel = currentSection === "sales" ? "Filtrar cultura" : "Filtrar item de compra";
-  const filterOptions = currentSection === "sales"
-    ? [
-        ["all", "Todas"],
-        ["soy", "Soja"],
-        ["corn", "Milho"],
-        ["sorghum", "Sorgo"],
-      ]
-    : [
-        ["all", "Todos"],
-        ["soy-seed", "Semente de soja"],
-        ["corn-seed", "Semente de milho"],
-        ["urea", "Ureia"],
-        ["map-fertilizer", "MAP"],
-        ["potassium-chloride", "Cloreto de potassio"],
-      ];
   const sourceLabel =
     sourceMode === "official"
       ? "Fonte oficial"
@@ -1724,17 +1707,21 @@ function renderMarketView() {
           <div>
             <span class="eyebrow">Mercado</span>
             <h3>Principais precos acompanhados</h3>
-            <p>Esta aba puxa os precos pela API do app. Aqui voce pode alternar entre o que a fazenda vende e o que costuma comprar, sempre com foco atual em Goias.</p>
+            <p>Esta aba puxa os precos pela API do app. Agora os valores ficam separados entre o que a fazenda vende e o que ela costuma comprar, sempre com foco atual em Goias.</p>
           </div>
           <div class="card-actions">
-            <div class="market-section-toggle">
-              <button class="button-secondary ${currentSection === "sales" ? "active" : ""}" type="button" data-action="set-market-section" data-section="sales">Venda</button>
-              <button class="button-secondary ${currentSection === "purchases" ? "active" : ""}" type="button" data-action="set-market-section" data-section="purchases">Compras</button>
-            </div>
             <label class="toolbar-field market-filter-field">
-              <span>${filterLabel}</span>
+              <span>Filtrar dentro da tela</span>
               <select name="marketFilter">
-                ${filterOptions.map(([value, label]) => renderOption(value, state.marketPage.filter, label)).join("")}
+                ${renderOption("all", state.marketPage.filter, "Todos")}
+                ${renderOption("soy", state.marketPage.filter, "Soja")}
+                ${renderOption("corn", state.marketPage.filter, "Milho")}
+                ${renderOption("sorghum", state.marketPage.filter, "Sorgo")}
+                ${renderOption("soy-seed", state.marketPage.filter, "Semente de soja")}
+                ${renderOption("corn-seed", state.marketPage.filter, "Semente de milho")}
+                ${renderOption("urea", state.marketPage.filter, "Ureia")}
+                ${renderOption("map-fertilizer", state.marketPage.filter, "MAP")}
+                ${renderOption("potassium-chloride", state.marketPage.filter, "Cloreto de potassio")}
               </select>
             </label>
             <button class="button-secondary" type="button" data-action="refresh-market" ${state.marketPage.loading ? "disabled" : ""}>
@@ -1777,8 +1764,32 @@ function renderMarketView() {
                     ${sourceLabel}
                   </span>
                 </div>
-                <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
-                  ${renderMarketFeedCards(feed)}
+                <div class="market-split-layout">
+                  <section class="market-group-panel">
+                    <div class="market-group-head">
+                      <div>
+                        <span class="eyebrow">Venda</span>
+                        <h4>O que a fazenda vende</h4>
+                        <p>Soja, milho e sorgo com referencia oficial para acompanhar oportunidade de venda.</p>
+                      </div>
+                    </div>
+                    <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
+                      ${renderMarketFeedCards(feed, "sales")}
+                    </div>
+                  </section>
+
+                  <section class="market-group-panel">
+                    <div class="market-group-head">
+                      <div>
+                        <span class="eyebrow">Compras</span>
+                        <h4>O que a fazenda costuma comprar</h4>
+                        <p>Sementes e fertilizantes organizados separados para nao misturar custo com receita.</p>
+                      </div>
+                    </div>
+                    <div class="commodity-grid market-page-grid" style="margin-top: 18px;">
+                      ${renderMarketFeedCards(feed, "purchases")}
+                    </div>
+                  </section>
                 </div>
               </section>
 
@@ -3397,15 +3408,14 @@ function renderMarketCards() {
   `;
 }
 
-function renderMarketFeedCards(feed) {
+function renderMarketFeedCards(feed, category = null) {
   const allItems = Array.isArray(feed?.items) ? feed.items : [];
-  const section = state.marketPage.section || "sales";
-  const sectionItems = allItems.filter((item) => (item.category || "sales") === section);
+  const sectionItems = category ? allItems.filter((item) => (item.category || "sales") === category) : allItems;
   const items = state.marketPage.filter === "all"
     ? sectionItems
     : sectionItems.filter((item) => item.slug === state.marketPage.filter);
   if (!items.length) {
-    return renderEmptyState("Sem precos nessa rodada", "A API do Mercado ainda nao trouxe itens suficientes para montar esse painel.");
+    return renderEmptyState("Nada para mostrar aqui", "Esse filtro nao encontrou itens nesta parte do Mercado.");
   }
   return items
     .map((item) => {

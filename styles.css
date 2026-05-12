@@ -2003,6 +2003,30 @@ optgroup {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
+.market-split-layout {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.market-group-panel {
+  padding: 18px;
+  border-radius: 22px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.market-group-head h4 {
+  margin: 4px 0 8px;
+  font-size: 1.2rem;
+}
+
+.market-group-head p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .market-page-card {
   min-height: 208px;
 }
