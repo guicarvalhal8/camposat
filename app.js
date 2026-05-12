@@ -2296,9 +2296,12 @@ function renderDetailView(plot) {
           <div class="weather-grid" style="margin-top: 18px;">
             ${renderExplainMetric("Temperatura", `${scene.weather.tempC}C`, describeTemperature(scene.weather.tempC))}
             ${renderExplainMetric("Chuva recente", `${scene.weather.rainMm} mm`, describeRain(scene.weather.rainMm))}
+            ${renderExplainMetric("Chuva acumulada recente", `${scene.weather.recentRainMm ?? 0} mm`, "Soma da chuva dos ultimos dias para ajudar a entender encharcamento e janela de operacao.")}
             ${renderExplainMetric("Umidade do ar", `${scene.weather.humidity}%`, describeHumidity(scene.weather.humidity))}
             ${renderExplainMetric("Vento", `${scene.weather.windKmh} km/h`, describeWind(scene.weather.windKmh))}
           </div>
+          ${renderWeatherForecast(scene)}
+          ${renderFieldRisk(scene)}
           ${renderWeatherSource(scene)}
         </section>
 
@@ -5232,6 +5235,38 @@ function renderWeatherSource(scene) {
     <div class="market-context-note" style="margin-top: 18px;">
       <strong>Origem do clima: ${scene.weather.source}</strong>
       <p>${scene.weather.sourceMode === "official" ? "Esses dados vieram de uma fonte externa por coordenada." : "Esses dados vieram do fallback local do app para nao deixar a tela vazia."}${observedAt ? ` ${observedAt}.` : ""}</p>
+    </div>
+  `;
+}
+
+function renderWeatherForecast(scene) {
+  const forecast = Array.isArray(scene?.weather?.forecast) ? scene.weather.forecast : [];
+  if (!forecast.length) return "";
+  return `
+    <div class="weather-forecast-strip">
+      ${forecast
+        .map(
+          (day) => `
+            <div class="weather-forecast-card">
+              <strong>${day.label || "--"}</strong>
+              <span>${day.tempMinC}C a ${day.tempMaxC}C</span>
+              <span>Chuva ${day.rainMm} mm</span>
+              <span>Vento ${day.windKmh} km/h</span>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderFieldRisk(scene) {
+  const risk = scene?.weather?.fieldRisk;
+  if (!risk) return "";
+  return `
+    <div class="market-context-note weather-risk-note weather-risk-${risk.level || "low"}" style="margin-top: 18px;">
+      <strong>${risk.label || "Risco operacional"}</strong>
+      <p>${risk.note || "Sem observacao adicional para esta rodada."}</p>
     </div>
   `;
 }

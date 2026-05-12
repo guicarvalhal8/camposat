@@ -654,15 +654,53 @@ class MockWeatherProvider:
         rain = 14 if status == "green" else 5 if status == "yellow" else 1
         humidity = 81 if status == "green" else 66 if status == "yellow" else 54
         wind = 7 if status == "green" else 12 if status == "yellow" else 15
+        recent_rain = 18 if status == "green" else 9 if status == "yellow" else 4
+        forecast = [
+            {"label": "Amanha", "date": "", "tempMaxC": round(base_temp + 1.2, 1), "tempMinC": round(base_temp - 5.4, 1), "rainMm": round(max(0, rain - 2), 1), "windKmh": round(wind + 1.5, 1)},
+            {"label": "Dia 2", "date": "", "tempMaxC": round(base_temp + 2.0, 1), "tempMinC": round(base_temp - 4.8, 1), "rainMm": round(max(0, rain + 1), 1), "windKmh": round(wind + 2.4, 1)},
+            {"label": "Dia 3", "date": "", "tempMaxC": round(base_temp + 0.8, 1), "tempMinC": round(base_temp - 5.9, 1), "rainMm": round(max(0, rain - 1), 1), "windKmh": round(wind + 0.8, 1)},
+        ]
+        field_risk = self._build_field_risk(ndvi, recent_rain, humidity, wind, forecast)
         return {
             "tempC": round(base_temp + (0.6 - ndvi) * 10, 1),
             "rainMm": rain,
             "humidity": humidity,
             "windKmh": wind,
+            "recentRainMm": recent_rain,
+            "forecast": forecast,
+            "fieldRisk": field_risk,
             "source": "Simulacao local do CampoSat",
             "sourceMode": "fallback",
             "observedAt": captured_at or now_label(),
         }
+
+    def _build_field_risk(self, ndvi, recent_rain, humidity, wind, forecast):
+        rainy_days = sum(1 for day in forecast if day["rainMm"] >= 10)
+        score = 0
+        reasons = []
+        if ndvi < 0.55:
+            score += 2
+            reasons.append("a lavoura ja mostra sinal mais fraco")
+        elif ndvi < 0.68:
+            score += 1
+            reasons.append("a lavoura pede acompanhamento")
+        if recent_rain >= 25:
+            score += 1
+            reasons.append("choveu bastante nos ultimos dias")
+        if rainy_days >= 2:
+            score += 2
+            reasons.append("ha mais chuva prevista na sequencia")
+        if wind >= 18:
+            score += 1
+            reasons.append("o vento pode atrapalhar a operacao")
+        if humidity >= 85:
+            score += 1
+            reasons.append("a umidade alta pode alongar a janela de cuidado")
+        if score >= 4:
+            return {"level": "high", "label": "Risco alto", "note": f"Vale segurar a operacao e monitorar de perto porque {', '.join(reasons)}."}
+        if score >= 2:
+            return {"level": "medium", "label": "Risco moderado", "note": f"Da para operar com cuidado porque {', '.join(reasons)}."}
+        return {"level": "low", "label": "Risco baixo", "note": "O clima desta rodada nao indica trava importante para a operacao de campo."}
 
 
 class OpenMeteoWeatherProvider:
@@ -697,6 +735,15 @@ class OpenMeteoWeatherProvider:
             "rainMm": live_weather["rainMm"],
             "humidity": live_weather["humidity"],
             "windKmh": live_weather["windKmh"],
+            "recentRainMm": live_weather["recentRainMm"],
+            "forecast": live_weather["forecast"],
+            "fieldRisk": self.fallback_provider._build_field_risk(
+                ndvi,
+                live_weather["recentRainMm"],
+                live_weather["humidity"],
+                live_weather["windKmh"],
+                live_weather["forecast"],
+            ),
             "source": "Open-Meteo",
             "sourceMode": "official",
             "observedAt": live_weather["observedAt"],
@@ -709,9 +756,10 @@ class OpenMeteoWeatherProvider:
             "latitude": lat,
             "longitude": lon,
             "timezone": "auto",
-            "forecast_days": 1,
+            "forecast_days": 4,
+            "past_days": 3,
             "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation",
-            "daily": "precipitation_sum",
+            "daily": "precipitation_sum,temperature_2m_max,temperature_2m_min,wind_speed_10m_max",
             "temperature_unit": "celsius",
             "wind_speed_unit": "kmh",
             "precipitation_unit": "mm",
@@ -724,17 +772,41 @@ class OpenMeteoWeatherProvider:
         current = payload.get("current") or {}
         daily = payload.get("daily") or {}
         daily_precip = daily.get("precipitation_sum") or []
+        daily_time = daily.get("time") or []
+        daily_temp_max = daily.get("temperature_2m_max") or []
+        daily_temp_min = daily.get("temperature_2m_min") or []
+        daily_wind_max = daily.get("wind_speed_10m_max") or []
         temp_c = self._safe_float(current.get("temperature_2m"))
         humidity = self._safe_float(current.get("relative_humidity_2m"))
         wind_kmh = self._safe_float(current.get("wind_speed_10m"))
         rain_mm = self._safe_float(daily_precip[0] if daily_precip else current.get("precipitation"))
         if temp_c is None or humidity is None or wind_kmh is None or rain_mm is None:
             return None
+        current_date = str(current.get("time") or "").split("T")[0]
+        try:
+            current_index = daily_time.index(current_date)
+        except ValueError:
+            current_index = 0
+        recent_rain = round(sum(self._safe_float(value) or 0.0 for value in daily_precip[max(0, current_index - 3):current_index]), 1)
+        forecast = []
+        for index in range(current_index + 1, min(len(daily_time), current_index + 4)):
+            forecast.append(
+                {
+                    "label": self._forecast_label(daily_time[index], index - current_index),
+                    "date": daily_time[index],
+                    "tempMaxC": round(self._safe_float(daily_temp_max[index]) or 0.0, 1),
+                    "tempMinC": round(self._safe_float(daily_temp_min[index]) or 0.0, 1),
+                    "rainMm": round(self._safe_float(daily_precip[index]) or 0.0, 1),
+                    "windKmh": round(self._safe_float(daily_wind_max[index]) or 0.0, 1),
+                }
+            )
         return {
             "tempC": round(temp_c, 1),
             "rainMm": round(rain_mm, 1),
             "humidity": int(round(humidity)),
             "windKmh": round(wind_kmh, 1),
+            "recentRainMm": recent_rain,
+            "forecast": forecast,
             "observedAt": str(current.get("time") or now_label()).replace("T", " "),
         }
 
@@ -823,6 +895,15 @@ class OpenMeteoWeatherProvider:
             return float(value)
         except (TypeError, ValueError):
             return None
+
+    def _forecast_label(self, iso_date, offset):
+        try:
+            parsed = datetime.strptime(str(iso_date), "%Y-%m-%d")
+            if offset == 1:
+                return "Amanha"
+            return parsed.strftime("%d/%m")
+        except ValueError:
+            return f"Dia {offset}"
 
 
 class ConabMarketProvider:

@@ -2110,6 +2110,46 @@ optgroup {
   line-height: 1.5;
 }
 
+.weather-forecast-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.weather-forecast-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.weather-forecast-card strong {
+  font-size: 0.96rem;
+}
+
+.weather-forecast-card span {
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.weather-risk-note.weather-risk-low {
+  border-color: rgba(103, 241, 201, 0.22);
+  background: rgba(103, 241, 201, 0.08);
+}
+
+.weather-risk-note.weather-risk-medium {
+  border-color: rgba(255, 181, 92, 0.24);
+  background: rgba(255, 181, 92, 0.1);
+}
+
+.weather-risk-note.weather-risk-high {
+  border-color: rgba(255, 107, 107, 0.24);
+  background: rgba(255, 107, 107, 0.1);
+}
+
 .market-empty-price {
   color: var(--muted);
   font-size: 1.3rem;
